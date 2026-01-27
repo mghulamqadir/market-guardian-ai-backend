@@ -1,57 +1,37 @@
-# 🚀 Market Guardian AI Backend.
-Intervene the market with AI.
----
+# Market Guardian AI Backend
 
-## ✨ Features
+Express + Sequelize API for authentication, user profiles, email workflows, and S3 media handling.
 
-- 🔐 **Authentication**
-  - JWT-based auth flow
-  - Secure middleware setup
-
-- 📧 **Email Service**
-  - Integration with Brevo for email notifications
-
-- 🖼️ **Media Handling**
-  - Upload-ready services
-  - Integrated with AWS S3 for cloud storage
-
-- 🧩 **Clean Project Structure**
-  - Controllers, routes, services, models, middlewares
-  - Scales well as your app grows
-
-- 🧹 **Developer Experience**
-  - ESLint + Prettier configured
-  - Environment-based configuration
-  - Auto-reload in development
 
 ---
 
-## 🛠 Tech Stack
+## Tech Stack
 
-- **Runtime:** Node.js
-- **Framework:** Express.js
-- **Database:** PostgreSQL + Sequelize
-- **Email:** Brevo
-- **Auth:** JWT
-- **Linting:** ESLint
-- **Formatting:** Prettier
+- Runtime: Node.js (>=24)
+- Framework: Express 5
+- Database: PostgreSQL + Sequelize
+- Auth: JWT
+- Validation: Joi
+- Email: Brevo (Sib SDK)
+- Media: Multer + Sharp + AWS SDK v3 (S3)
+- Tooling: ESLint, Prettier, Husky
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 .
 ├── src/
-│   ├── config/        # DB & Env config
+│   ├── config/        # DB + AWS configuration
 │   ├── controllers/   # Route controllers
-│   ├── routes/        # Express route definitions
-│   ├── services/      # Business logic & integrations
+│   ├── middlewares/   # Auth, validation, uploads
 │   ├── models/        # Sequelize models
-│   ├── middlewares/   # Auth & request middleware
-│   ├── utils/         # Helpers & utilities
-│   └── index.js       # Main server entry & DB connection
+│   ├── routes/        # Express routes
+│   ├── services/      # Business logic & integrations
+│   └── utils/         # Helpers & response utilities
 ├── app.js             # Express app setup
+├── index.js           # Server entry point + DB connect
 ├── .env.example
 ├── package.json
 └── README.md
@@ -59,68 +39,86 @@ Intervene the market with AI.
 
 ---
 
-## ⚙️ Quick Start
+## Quick Start
 
-### 1️⃣ Install dependencies
+### 1) Install dependencies
 
 ```bash
 npm install
 ```
 
-### 2️⃣ Setup PostgreSQL
-
-Ensure you have PostgreSQL installed and running. Create a database (default name: `market_guardian`).
-
-### 3️⃣ Configure environment variables
+### 2) Configure environment variables
 
 ```bash
 cp .env.example .env
 ```
 
-Fill in values such as:
+Set values in `.env` (see the full list below).
 
-* PostgreSQL Host, Port, Database, User, Password
-* JWT secret
-* Brevo API Key & Sender Email
-* AWS Credentials & S3 Bucket Name
-
----
-
-### 4️⃣ Run in development
+### 3) Start the server
 
 ```bash
 npm run dev
 ```
 
+The server boots on `PORT` (default `3000`) and connects to PostgreSQL.
+
 ---
 
-## 📜 Available Scripts
+## Environment Variables
 
-* `npm start` — Run production server
-* `npm run dev` — Start server with auto-reload
-* `npm test` — Run tests (not configured yet)
-* `npm run lint` — Run ESLint
-* `npm run lint:fix` — Fix lint issues
-* `npm run format` — Format code with Prettier
+Required
+- `DB_PASSWORD`
+- `JWT_SECRET_KEY`
+- `BREVO_API_KEY`
+- `SENDER_EMAIL`
+- `SENDER_NAME`
+- `CONTACT_EMAIL`
+- `AWS_REGION`
+- `S3_BUCKET_NAME`
+- AWS credentials supported by the SDK (e.g. `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`)
 
-## 🤝 Contributing
+Common optional
+- `PORT` (default `3000`)
+- `DB_HOST` (default `localhost`)
+- `DB_PORT` (default `5432`)
+- `DB_NAME` (default `stay_calm`)
+- `DB_USER` (default `postgres`)
+- `DB_SSL` (`true`/`false`, default `false`)
+- `NODE_ENV` (`development` enables Sequelize sync + SQL logging)
+- `FRONTEND_URL` (used for verification links; default `http://localhost:3000`)
+- `S3_PUBLIC_BASE_URL` (override S3 public URL base)
+- `S3_ENDPOINT` (for S3-compatible endpoints)
+- `S3_FORCE_PATH_STYLE` (`true`/`false`, for S3-compatible endpoints)
 
-Contributions are welcome and encouraged.
+---
+
+## Scripts
+
+- `npm start` — Run production server
+- `npm run dev` — Start server with auto-reload
+- `npm run lint` — Run ESLint
+- `npm run lint:fix` — Fix lint issues
+- `npm run format` — Format code with Prettier
+- `npm test` — Not configured (placeholder)
+
+---
+
+## Contributing
 
 1. Fork the repo
 2. Create a feature branch
-
    ```bash
    git checkout -b feature/your-feature
    ```
 3. Commit your changes
-
    ```bash
    git commit -m "Add your feature"
    ```
 4. Push and open a Pull Request
 
 ---
-## 📜 License
 
-Licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+## License
+
+MIT
