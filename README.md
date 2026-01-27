@@ -97,6 +97,9 @@ Common optional
 
 - `npm start` — Run production server
 - `npm run dev` — Start server with auto-reload
+- `npm run db:migrate` — Run Sequelize migrations (uses `.env`)
+- `npm run db:migrate:undo` — Roll back last migration
+- `npm run db:migrate:undo:all` — Roll back all migrations
 - `npm run lint` — Run ESLint
 - `npm run lint:fix` — Fix lint issues
 - `npm run format` — Format code with Prettier
