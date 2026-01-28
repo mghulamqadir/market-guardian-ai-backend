@@ -1,5 +1,5 @@
 {
-  "name": "stay-calm-ai-backend",
+  "name": "market-guardian-ai-backend",
   "version": "1.0.0",
   "type": "module",
   "main": "index.js",
@@ -62,8 +62,8 @@
       "prettier --write"
     ]
   },
-  "homepage": "https://github.com/mghulamqadir/backend-boiler-plate#readme",
+  "homepage": "https://github.com/mghulamqadir/market-guardian-ai-backend#readme",
   "bugs": {
-    "url": "https://github.com/mghulamqadir/backend-boiler-plate/issues"
+    "url": "https://github.com/mghulamqadir/market-guardian-ai-backend/issues"
   }
 }

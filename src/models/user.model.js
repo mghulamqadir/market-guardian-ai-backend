@@ -1,111 +1,122 @@
+// src/models/user.model.js
 import { DataTypes } from 'sequelize';
 import { sequelize } from '../config/postgres.config.js';
-
+import { text, string, boolean, integer, date, uuid, uuidv4, dataEnum } from '../utils/dbTypes.js';
 const User = sequelize.define(
   'User',
   {
     id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
+      type: uuid,
+      defaultValue: uuidv4,
       primaryKey: true,
     },
+
     name: {
-      type: DataTypes.STRING,
+      type: string,
       allowNull: false,
-      validate: {
-        notEmpty: true,
-      },
+      validate: { notEmpty: true },
     },
+
+    // Store raw email for display + comms
     email: {
-      type: DataTypes.STRING,
+      type: string,
       allowNull: false,
-      unique: true,
-      validate: {
-        isEmail: true,
-        notEmpty: true,
-      },
+      validate: { isEmail: true, notEmpty: true },
     },
+
+    // ✅ Case-insensitive uniqueness at scale (unique index on email_lower)
+    emailLower: {
+      type: string,
+      allowNull: false,
+    },
+
     role: {
-      type: DataTypes.ENUM('user', 'admin'),
+      type: dataEnum('user', 'admin'),
       allowNull: false,
       defaultValue: 'user',
     },
+
     password: {
-      type: DataTypes.STRING,
+      type: string,
       allowNull: true,
     },
+
     profilePicture: {
-      type: DataTypes.STRING,
+      type: string,
       allowNull: true,
       defaultValue: null,
     },
+
     bio: {
-      type: DataTypes.TEXT,
-      allowNull: true,
+      type: text,
+      allowNull: false,
       defaultValue: '',
     },
+
     location: {
-      type: DataTypes.STRING,
-      allowNull: true,
+      type: string,
+      allowNull: false,
       defaultValue: '',
     },
+
     isVerified: {
-      type: DataTypes.BOOLEAN,
+      type: boolean,
       allowNull: false,
       defaultValue: false,
     },
+
     status: {
-      type: DataTypes.ENUM('active', 'inactive'),
+      type: dataEnum('active', 'inactive'),
       allowNull: false,
       defaultValue: 'active',
     },
+
     description: {
-      type: DataTypes.TEXT,
+      type: text,
       allowNull: true,
     },
-    stripeCustomerId: {
-      type: DataTypes.STRING,
-      allowNull: true,
-      defaultValue: null,
-    },
-    stripeAccountId: {
-      type: DataTypes.STRING,
-      allowNull: true,
-      defaultValue: null,
-    },
-    isStripeVerified: {
-      type: DataTypes.BOOLEAN,
-      allowNull: false,
-      defaultValue: false,
-    },
-    firebaseUid: {
-      type: DataTypes.STRING,
-      allowNull: true,
-      defaultValue: null,
-    },
+
     loginAttempts: {
-      type: DataTypes.INTEGER,
+      type: integer,
       allowNull: false,
       defaultValue: 0,
     },
+
     lastLoginAttempt: {
-      type: DataTypes.DATE,
+      type: date,
       allowNull: true,
     },
   },
   {
-    timestamps: true,
     tableName: 'users',
+    timestamps: true,
+    underscored: true,
+    paranoid: true,
     indexes: [
-      {
-        unique: true,
-        fields: ['email'],
-      },
+      
+      { unique: true, fields: ['email_lower'], name: 'users_email_lower_uq' },
+      { fields: ['status'], name: 'users_status_idx' },
+      { fields: ['role'], name: 'users_role_idx' },
     ],
+    hooks: {
+      beforeValidate: (user) => {
+        if (user.email) {
+          const cleaned = String(user.email).trim();
+          user.email = cleaned;
+          user.emailLower = cleaned.toLowerCase();
+        }
+      },
+      beforeUpdate: (user) => {
+        if (user.email) {
+          const cleaned = String(user.email).trim();
+          user.email = cleaned;
+          user.emailLower = cleaned.toLowerCase();
+        }
+      },
+    },
   }
 );
 
-// Hook to exclude password from JSON serialization
 User.prototype.toJSON = function () {
   const values = { ...this.get() };
   delete values.password;
