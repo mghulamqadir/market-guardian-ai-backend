@@ -1,5 +1,5 @@
 import { sequelize } from '../config/postgres.config.js';
-import { uuid, date, jsonb, bigInt } from '../utils/dbTypes.js';
+import { uuid, date, jsonb, bigInt, string, boolean } from '../utils/dbTypes.js';
 
 const Event = sequelize.define(
   'Event',

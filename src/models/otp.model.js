@@ -1,7 +1,7 @@
 import { DataTypes } from 'sequelize';
 import { sequelize } from '../config/postgres.config.js';
 import User from './user.model.js';
-import { text, string, boolean, integer, date, uuid, uuidv4, dataEnum } from '../utils/dbTypes.js';
+import { string, date, uuid, uuidv4 } from '../utils/dbTypes.js';
 
 const Otp = sequelize.define(
     'Otp',
@@ -47,6 +47,7 @@ const Otp = sequelize.define(
     {
         timestamps: true,
         tableName: 'otps',
+        underscored: true,
         indexes: [
             {
                 fields: ['userId'],
