@@ -23,10 +23,10 @@ const router = express.Router();
  *           schema:
  *             type: object
  *             required:
- *               - currentPassword
+ *               - oldPassword
  *               - newPassword
  *             properties:
- *               currentPassword:
+ *               oldPassword:
  *                 type: string
  *                 format: password
  *                 example: OldPass123!
