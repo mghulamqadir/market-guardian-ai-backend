@@ -18,3 +18,7 @@ export const socialMediaRegex = {
   youtube: /https:\/\/(?:www\.)?(?:youtu\.be\/|youtube\.com\/shorts\/)[a-zA-Z0-9_-]{11}(?:\?feature=shared)?/,
   tiktok: /^https:\/\/(?:(?:vt|vm)\.tiktok\.com\/[A-Za-z0-9]+\/?(?:\?.*)?|www\.tiktok\.com\/t\/[A-Za-z0-9]+\/?(?:\?.*)?|www\.tiktok\.com\/@[\w.-]+\/video\/\d+(?:\?.*)?)$/,
 };
+
+export function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}

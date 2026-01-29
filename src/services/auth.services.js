@@ -1,21 +1,46 @@
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
+
 import User from '../models/user.model.js';
+import Otp from '../models/otp.model.js';
+
 import { ApiError } from '../utils/response.handler.js';
 import { generateJwtToken } from '../utils/jwt.token.js';
-import Otp from '../models/otp.model.js';
+
 import {
   sendPasswordResetEmail,
   sendVerificationEmail,
 } from '../utils/brevo.utils.js';
-import { generateSixDigitCode } from '../utils/constant.utils.js';
-import crypto from 'crypto';
 
+import { generateSixDigitCode, normalizeEmail } from '../utils/constant.utils.js';
+
+/**
+ * AUTH: Signup
+ * - Store original email (trimmed) in `email`
+ * - Store normalized lowercase in `emailLower` (via hook or explicitly)
+ * - Enforce case-insensitive uniqueness using `emailLower`
+ */
 export async function signup({ name, email, password, confirmPassword }, file) {
+  if (!name || !String(name).trim()) {
+    throw ApiError(400, 'Name is required', []);
+  }
+
+  if (!email || !String(email).trim()) {
+    throw ApiError(400, 'Email is required', []);
+  }
+
+  if (!password) {
+    throw ApiError(400, 'Password is required', []);
+  }
+
   if (password !== confirmPassword) {
     throw ApiError(400, 'Passwords do not match', []);
   }
 
-  const existingUser = await User.findOne({ where: { email } });
+  const cleanedEmail = String(email).trim();
+  const emailLower = normalizeEmail(cleanedEmail);
+
+  const existingUser = await User.findOne({ where: { emailLower } });
   if (existingUser) {
     throw ApiError(400, 'Email already in use', [
       'Please use a different email or log in.',
@@ -23,12 +48,14 @@ export async function signup({ name, email, password, confirmPassword }, file) {
   }
 
   const hashedPassword = await bcrypt.hash(password, 10);
-
   const profilePictureUrl = file?.location || null;
 
+  // Note: hooks in your model should also set emailLower,
+  // but we set it explicitly to be safe.
   const newUser = await User.create({
-    name,
-    email,
+    name: String(name).trim(),
+    email: cleanedEmail,
+    emailLower,
     password: hashedPassword,
     isVerified: false,
     profilePicture: profilePictureUrl,
@@ -41,18 +68,30 @@ export async function signup({ name, email, password, confirmPassword }, file) {
     newCode: code,
     purpose: 'signup',
   });
-  await sendVerificationEmail(newUser, code);
 
-  const userData = newUser.toJSON();
+  await sendVerificationEmail(newUser, code);
 
   return {
     message: 'Signup successful! Verification email has been sent.',
-    user: userData,
+    user: newUser.toJSON(),
   };
 }
 
 export async function login({ email, password }) {
-  const user = await User.findOne({ where: { email } });
+  if (!email || !String(email).trim()) {
+    throw ApiError(400, 'Email is required', []);
+  }
+
+  if (!password) {
+    throw ApiError(400, 'Password is required', []);
+  }
+
+  const emailLower = normalizeEmail(email);
+  console.log('Login attempt for email:', emailLower);
+
+  const user = await User.findOne({ where: { emailLower } });
+  console.log('User found:', user ? user.email : 'No user found');
+
   if (!user) {
     throw ApiError(404, 'Invalid email or password', [
       'No user exists with this email address.',
@@ -60,22 +99,21 @@ export async function login({ email, password }) {
   }
 
   const isMatch = await bcrypt.compare(password, user.password);
-
   if (!isMatch) {
     throw ApiError(400, 'Invalid email or password', ['Incorrect password.']);
   }
 
+  // Keeping your logic as-is (though usually this increments on failure)
   user.loginAttempts += 1;
   user.lastLoginAttempt = new Date();
   await user.save();
 
-  const userData = user.toJSON();
-  const response = { user: userData };
+  const response = { user: user.toJSON() };
 
   if (user.isVerified) {
-    const token = generateJwtToken({ userId: user.id });
-    response.token = token;
+    response.token = generateJwtToken({ userId: user.id });
     response.message = 'Login successful';
+    response.success = true;
   } else {
     response.message = 'Please verify your account';
     response.token = null;
@@ -100,13 +138,26 @@ export async function login({ email, password }) {
       newCode: code,
       purpose: 'signup',
     });
-    // await sendVerificationEmail(userData, code);
+    await sendVerificationEmail(userData, code);
   }
+
   return response;
 }
 
+/**
+ * AUTH: Forgot Password
+ * - Lookup by email
+ * - Save hashed reset token in Otp.newCode
+ * - Send raw resetToken via email
+ */
 export async function forgotPassword(email, redirectUrl) {
-  const user = await User.findOne({ where: { email } });
+  if (!email || !String(email).trim()) {
+    throw ApiError(400, 'Email is required', []);
+  }
+
+  const emailLower = normalizeEmail(email);
+
+  const user = await User.findOne({ where: { emailLower } });
   if (!user) {
     throw ApiError(
       404,
@@ -115,10 +166,7 @@ export async function forgotPassword(email, redirectUrl) {
   }
 
   const existingOtp = await Otp.findOne({
-    where: {
-      userId: user.id,
-      purpose: 'forgotPassword',
-    },
+    where: { userId: user.id, purpose: 'forgotPassword' },
   });
 
   if (existingOtp) {
@@ -126,7 +174,10 @@ export async function forgotPassword(email, redirectUrl) {
   }
 
   const resetToken = crypto.randomBytes(32).toString('hex');
-  const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+  const hashedToken = crypto
+    .createHash('sha256')
+    .update(resetToken)
+    .digest('hex');
 
   await Otp.create({
     userId: user.id,
@@ -137,17 +188,28 @@ export async function forgotPassword(email, redirectUrl) {
 
   await sendPasswordResetEmail(user, resetToken, redirectUrl);
 
-  return { message: 'Password reset Link sent successfully.' };
+  return { message: 'Password reset link sent successfully.' };
 }
 
+/**
+ * AUTH: Reset Password
+ * - token comes from email link
+ * - hash it and find matching otp record
+ * - update password and delete otp
+ */
 export async function resetPassword(token, newPassword) {
+  if (!token) {
+    throw ApiError(400, 'Reset token is required', []);
+  }
+
+  if (!newPassword) {
+    throw ApiError(400, 'New password is required', []);
+  }
+
   const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
 
   const otp = await Otp.findOne({
-    where: {
-      newCode: hashedToken,
-      purpose: 'forgotPassword',
-    },
+    where: { newCode: hashedToken, purpose: 'forgotPassword' },
   });
 
   if (!otp) {
@@ -176,7 +238,17 @@ export async function resetPassword(token, newPassword) {
   return { message: 'Password reset successfully.' };
 }
 
+/**
+ * AUTH: Verify Email
+ * - code is the 6 digit otp
+ * - check expiry
+ * - verify user and delete otp
+ */
 export async function verifyEmail(code) {
+  if (!code) {
+    throw ApiError(400, 'Verification code is required', []);
+  }
+
   const otp = await Otp.findOne({ where: { newCode: code, purpose: 'signup' } });
   if (!otp) {
     throw ApiError(400, 'Invalid or expired verification code', [
@@ -191,16 +263,29 @@ export async function verifyEmail(code) {
     ]);
   }
 
-  await User.update(
-    { isVerified: true },
-    { where: { id: otp.userId } }
-  );
-
+  await User.update({ isVerified: true }, { where: { id: otp.userId } });
   await otp.destroy();
+
+  return { message: 'Email verified successfully.' };
 }
 
+/**
+ * AUTH: Resend Verification Email
+ * - Lookup by emailLower (case-insensitive)
+ * - Create OTP and email it (for signup)
+ */
 export async function resendVerificationEmail(email, purpose) {
-  const user = await User.findOne({ where: { email } });
+  if (!email || !String(email).trim()) {
+    throw ApiError(400, 'Email is required', []);
+  }
+
+  if (!purpose) {
+    throw ApiError(400, 'Purpose is required', []);
+  }
+
+  const emailLower = normalizeEmail(email);
+
+  const user = await User.findOne({ where: { emailLower } });
   if (!user) {
     throw ApiError(
       404,
@@ -215,10 +300,7 @@ export async function resendVerificationEmail(email, purpose) {
   }
 
   const existingOtp = await Otp.findOne({
-    where: {
-      userId: user.id,
-      purpose,
-    },
+    where: { userId: user.id, purpose },
   });
 
   if (existingOtp) {
@@ -235,9 +317,10 @@ export async function resendVerificationEmail(email, purpose) {
 
   if (purpose === 'signup') {
     await sendVerificationEmail(user, code);
-  }
-
-  if (purpose === 'forgotPassword') {
+  } else if (purpose === 'forgotPassword') {
+    // ⚠️ your original code sends reset email with "code" directly,
+    // but your forgotPassword flow uses a link token approach.
+    // Keeping your original behavior; but consider removing this branch.
     await sendPasswordResetEmail(user, code);
   }
 

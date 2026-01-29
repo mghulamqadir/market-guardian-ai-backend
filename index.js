@@ -1,3 +1,4 @@
+import './src/models/index.js';
 import { connectDB } from './src/config/postgres.config.js';
 import app from './app.js';
 

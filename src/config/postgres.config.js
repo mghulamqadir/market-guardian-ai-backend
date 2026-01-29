@@ -45,7 +45,7 @@ async function connectWithRetry() {
       
       // Sync models with database (creates tables if they don't exist)
       // In production, use migrations instead
-      if (process.env.NODE_ENV === 'development') {
+      if (process.env.ENV === 'development') {
         await sequelize.sync({ alter: false });
         console.log('Database tables synchronized');
       }

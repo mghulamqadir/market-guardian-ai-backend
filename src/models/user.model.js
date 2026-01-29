@@ -28,6 +28,7 @@ const User = sequelize.define(
     emailLower: {
       type: string,
       allowNull: false,
+      field: 'email_lower',
     },
 
     role: {
@@ -45,6 +46,7 @@ const User = sequelize.define(
       type: string,
       allowNull: true,
       defaultValue: null,
+      field: 'profile_picture',
     },
 
     bio: {
@@ -63,6 +65,7 @@ const User = sequelize.define(
       type: boolean,
       allowNull: false,
       defaultValue: false,
+      field: 'is_verified',
     },
 
     status: {
@@ -80,11 +83,13 @@ const User = sequelize.define(
       type: integer,
       allowNull: false,
       defaultValue: 0,
+      field: 'login_attempts',
     },
 
     lastLoginAttempt: {
       type: date,
       allowNull: true,
+      field: 'last_login_attempt',
     },
   },
   {

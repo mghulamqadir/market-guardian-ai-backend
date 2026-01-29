@@ -14,6 +14,7 @@ const Otp = sequelize.define(
         userId: {
             type: uuid,
             allowNull: false,
+            field: 'user_id',
             references: {
                 model: User,
                 key: 'id',
@@ -32,6 +33,7 @@ const Otp = sequelize.define(
         newCode: {
             type: string,
             allowNull: false,
+            field: 'new_code',
         },
         purpose: {
             type: string,
@@ -41,6 +43,7 @@ const Otp = sequelize.define(
         expireAt: {
             type: date,
             allowNull: false,
+            field: 'expire_at',
             defaultValue: () => new Date(Date.now() + 60 * 1000), // 60 seconds from now
         },
     },
@@ -50,16 +53,16 @@ const Otp = sequelize.define(
         underscored: true,
         indexes: [
             {
-                fields: ['userId'],
+                fields: ['user_id'],
             },
             {
                 fields: ['email'],
             },
             {
-                fields: ['newCode'],
+                fields: ['new_code'],
             },
             {
-                fields: ['expireAt'],
+                fields: ['expire_at'],
             },
         ],
     }
