@@ -150,18 +150,18 @@ router.get('/me', authenticateToken, userController.getProfile);
  *           schema:
  *             type: object
  *             required:
- *               - name
+ *               - username
  *               - email
- *               - message
+ *               - description
  *             properties:
- *               name:
+ *               username:
  *                 type: string
  *                 example: John Doe
  *               email:
  *                 type: string
  *                 format: email
  *                 example: john@example.com
- *               message:
+ *               description:
  *                 type: string
  *                 example: I have a question about your service
  *     responses:
