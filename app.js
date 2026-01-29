@@ -2,9 +2,11 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import bodyParser from 'body-parser';
+import swaggerUi from 'swagger-ui-express';
 
 import routes from './src/routes/index.js';
 import { errorHandler } from './src/utils/response.handler.js';
+import { swaggerSpec } from './src/config/swagger.config.js';
 
 const app = express();
 
@@ -14,6 +16,14 @@ app.use(morgan('dev'));
 // Now JSON parser AFTER webhooks
 app.use(bodyParser.json());
 
+
+// ---------------------------
+// SWAGGER DOCUMENTATION
+// ---------------------------
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+    customCss: '.swagger-ui .topbar { display: none }',
+    customSiteTitle: 'Market Guardian AI - API Docs',
+}));
 
 // ---------------------------
 // ROUTES
