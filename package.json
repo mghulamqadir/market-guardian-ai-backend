@@ -41,6 +41,8 @@
     "sib-api-v3-sdk": "^8.5.0",
     "streamifier": "^0.1.1",
     "stripe": "^20.0.0",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.1",
     "uuid": "^13.0.0"
   },
   "overrides": {
@@ -65,5 +67,6 @@
   "homepage": "https://github.com/mghulamqadir/market-guardian-ai-backend#readme",
   "bugs": {
     "url": "https://github.com/mghulamqadir/market-guardian-ai-backend/issues"
-  }
+  },
+  "packageManager": "pnpm@10.21.0+sha512.da3337267e400fdd3d479a6c68079ac6db01d8ca4f67572083e722775a796788a7a9956613749e000fac20d424b594f7a791a5f4e2e13581c5ef947f26968a40"
 }

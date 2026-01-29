@@ -11,6 +11,63 @@ import { processAndUploadImage, upload } from '../middlewares/multer.middleware.
 
 const router = express.Router();
 
+/**
+ * @swagger
+ * /api/signup:
+ *   post:
+ *     summary: Register a new user
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *               - email
+ *               - password
+ *               - confirmPassword
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 minLength: 3
+ *                 example: John Doe
+ *                 description: User's full name (minimum 3 characters)
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: john@example.com
+ *                 description: Valid email address (.com or .net domains)
+ *               password:
+ *                 type: string
+ *                 format: password
+ *                 minLength: 8
+ *                 example: SecurePass123!
+ *                 description: Must be at least 8 characters with 1 uppercase, 1 lowercase, 1 number, and 1 special character
+ *               confirmPassword:
+ *                 type: string
+ *                 format: password
+ *                 example: SecurePass123!
+ *                 description: Must match the password field
+ *               profilePicture:
+ *                 type: string
+ *                 format: binary
+ *                 description: Optional profile picture (processed by multer middleware)
+ *     responses:
+ *       201:
+ *         description: User registered successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Success'
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post(
   '/signup',
   upload.single('profilePicture'),
@@ -19,18 +76,213 @@ router.post(
   authControllers.signup
 );
 
+/**
+ * @swagger
+ * /api/verify-email:
+ *   post:
+ *     summary: Verify user email with verification code
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - code
+ *             properties:
+ *               code:
+ *                 type: string
+ *                 example: "123456"
+ *                 description: Verification code sent to email
+ *     responses:
+ *       200:
+ *         description: Email verified successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Success'
+ *       400:
+ *         description: Invalid or expired verification code
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post('/verify-email', authControllers.verifyEmail);
 
+/**
+ * @swagger
+ * /api/resend-email:
+ *   post:
+ *     summary: Resend verification email
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - purpose
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: john@example.com
+ *               purpose:
+ *                 type: string
+ *                 enum: [signup, forgotPassword]
+ *                 example: signup
+ *                 description: Purpose of the email (signup or forgotPassword)
+ *     responses:
+ *       200:
+ *         description: Verification email sent
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Success'
+ *       400:
+ *         description: Bad request
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post(
   '/resend-email',
   resendEmailValidator,
   authControllers.resendVerificationEmail,
 );
 
+/**
+ * @swagger
+ * /api/login:
+ *   post:
+ *     summary: Login user
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: john@example.com
+ *               password:
+ *                 type: string
+ *                 format: password
+ *                 example: SecurePass123!
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/Success'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: object
+ *                       properties:
+ *                         token:
+ *                           type: string
+ *                           description: JWT access token
+ *                         user:
+ *                           $ref: '#/components/schemas/User'
+ *       401:
+ *         description: Invalid credentials
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post('/login', loginValidator, authControllers.login);
 
+/**
+ * @swagger
+ * /api/forgot-password:
+ *   post:
+ *     summary: Request password reset
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: john@example.com
+ *     responses:
+ *       200:
+ *         description: Password reset email sent
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Success'
+ *       404:
+ *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post('/forgot-password', authControllers.forgotPassword);
 
+/**
+ * @swagger
+ * /api/reset-password:
+ *   post:
+ *     summary: Reset password with verification code
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - code
+ *               - newPassword
+ *             properties:
+ *               code:
+ *                 type: string
+ *                 minLength: 3
+ *                 example: "123456"
+ *                 description: Reset code sent to email
+ *               newPassword:
+ *                 type: string
+ *                 format: password
+ *                 minLength: 8
+ *                 example: NewSecurePass123!
+ *                 description: Must be at least 8 characters with 1 uppercase, 1 lowercase, 1 number, and 1 special character
+ *     responses:
+ *       200:
+ *         description: Password reset successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Success'
+ *       400:
+ *         description: Invalid or expired verification code
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post(
   '/reset-password',
   resetPasswordValidator,
