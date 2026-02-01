@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Market Guardian AI Demo</title>
+    <style>
+      :root {
+        --bg-primary: #0b0f14;
+        --bg-secondary: #141b23;
+        --bg-tertiary: #1d2631;
+        --text-primary: #e6edf3;
+        --text-secondary: #9aa7b2;
+        --border-color: #283341;
+        --green: #2bd47d;
+        --red: #ff5c5c;
+        --yellow: #f0b34d;
+        --blue: #4ea1ff;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
+        background: radial-gradient(circle at 20% 0%, #0e141b, var(--bg-primary));
+        color: var(--text-primary);
+        min-height: 100vh;
+      }
+
+      .container {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        margin-bottom: 20px;
+      }
+
+      .logo {
+        font-size: 1.3rem;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+      }
+
+      .status-badges {
+        display: flex;
+        gap: 12px;
+      }
+
+      .badge {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        background: var(--bg-tertiary);
+        border-radius: 20px;
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+      }
+
+      .badge-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--text-secondary);
+      }
+
+      .badge-dot.connected {
+        background: var(--green);
+      }
+
+      .badge-dot.streaming {
+        background: var(--blue);
+        animation: pulse 1.5s infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+
+      .main-grid {
+        display: grid;
+        grid-template-columns: 1fr 340px;
+        gap: 20px;
+      }
+
+      @media (max-width: 1000px) {
+        .main-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .panel {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 14px;
+        overflow: hidden;
+      }
+
+      .panel-header {
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--border-color);
+        font-weight: 600;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .panel-body {
+        padding: 18px;
+      }
+
+      .price-section {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .price-main {
+        font-size: 2.4rem;
+        font-weight: 700;
+        font-family: "IBM Plex Mono", "SF Mono", monospace;
+      }
+
+      .price-change {
+        font-size: 1rem;
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-weight: 600;
+      }
+
+      .price-change.positive {
+        background: rgba(43, 212, 125, 0.15);
+        color: var(--green);
+      }
+
+      .price-change.negative {
+        background: rgba(255, 92, 92, 0.15);
+        color: var(--red);
+      }
+
+      .pair-selector {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .pair-selector select {
+        padding: 8px 10px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        color: var(--text-primary);
+        font-size: 0.85rem;
+      }
+
+      .state-indicator {
+        padding: 10px 14px;
+        border-radius: 8px;
+        text-align: center;
+        font-weight: 600;
+        margin-bottom: 12px;
+      }
+
+      .state-indicator.normal {
+        background: rgba(43, 212, 125, 0.15);
+        color: var(--green);
+      }
+
+      .state-indicator.volatile {
+        background: rgba(240, 179, 77, 0.15);
+        color: var(--yellow);
+      }
+
+      .state-indicator.high-risk {
+        background: rgba(255, 92, 92, 0.15);
+        color: var(--red);
+      }
+
+      .chart-container {
+        height: 280px;
+        background: #0c1218;
+        border-radius: 10px;
+        padding: 16px;
+        display: flex;
+        align-items: flex-end;
+      }
+
+      .chart-candles {
+        display: flex;
+        align-items: flex-end;
+        gap: 2px;
+        height: 100%;
+        width: 100%;
+      }
+
+      .candle {
+        flex: 1;
+        min-width: 3px;
+        max-width: 10px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .candle-wick {
+        width: 1px;
+        background: var(--text-secondary);
+      }
+
+      .candle-body {
+        width: 100%;
+        min-height: 2px;
+        border-radius: 1px;
+      }
+
+      .candle-body.green {
+        background: var(--green);
+      }
+
+      .candle-body.red {
+        background: var(--red);
+      }
+
+      .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        margin-top: 14px;
+      }
+
+      .metric-card {
+        background: var(--bg-tertiary);
+        padding: 12px;
+        border-radius: 8px;
+        text-align: center;
+      }
+
+      .metric-label {
+        font-size: 0.7rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        margin-bottom: 5px;
+      }
+
+      .metric-value {
+        font-size: 1.05rem;
+        font-weight: 600;
+        font-family: "IBM Plex Mono", monospace;
+      }
+
+      .control-section {
+        margin-bottom: 18px;
+      }
+
+      .control-section h4 {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        margin-bottom: 10px;
+      }
+
+      .button-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        padding: 10px 14px;
+        border: none;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.2s ease;
+      }
+
+      button:hover:not(:disabled) {
+        transform: translateY(-1px);
+      }
+
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      .btn-primary {
+        background: var(--green);
+        color: #05130b;
+      }
+
+      .btn-danger {
+        background: var(--red);
+        color: #fff;
+      }
+
+      .btn-secondary {
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+      }
+
+      .btn-warning {
+        background: var(--yellow);
+        color: #1a1204;
+      }
+
+      button.active {
+        box-shadow: 0 0 0 1px var(--blue) inset;
+      }
+
+      .btn-small {
+        padding: 6px 10px;
+        font-size: 0.75rem;
+      }
+
+      .scenario-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .event-log {
+        max-height: 200px;
+        overflow-y: auto;
+        background: #0c1218;
+        border-radius: 8px;
+        padding: 10px;
+      }
+
+      .log-entry {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.75rem;
+        padding: 4px 0;
+        border-bottom: 1px solid var(--border-color);
+        color: var(--text-secondary);
+      }
+
+      .log-entry:last-child {
+        border-bottom: none;
+      }
+
+      .log-entry.alert {
+        color: var(--yellow);
+      }
+
+      .log-entry.error {
+        color: var(--red);
+      }
+
+      .log-entry.success {
+        color: var(--green);
+      }
+
+      .modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.75);
+        z-index: 1000;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .modal-overlay.visible {
+        display: flex;
+      }
+
+      .modal {
+        background: var(--bg-secondary);
+        border-radius: 14px;
+        max-width: 460px;
+        width: 90%;
+        overflow: hidden;
+        border: 1px solid var(--border-color);
+      }
+
+      .modal.volatile {
+        border-top: 4px solid var(--yellow);
+      }
+
+      .modal.high-risk {
+        border-top: 4px solid var(--red);
+      }
+
+      .modal-header {
+        padding: 18px;
+        font-weight: 700;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .modal-body {
+        padding: 0 18px 18px;
+      }
+
+      .modal-message {
+        font-size: 1rem;
+        line-height: 1.6;
+        margin-bottom: 14px;
+      }
+
+      .modal-signals {
+        background: #0c1218;
+        padding: 12px;
+        border-radius: 8px;
+      }
+
+      .modal-signals h5 {
+        font-size: 0.7rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        margin-bottom: 8px;
+      }
+
+      .modal-signals ul {
+        list-style: none;
+      }
+
+      .modal-signals li {
+        padding: 4px 0;
+        color: var(--text-secondary);
+        font-size: 0.85rem;
+      }
+
+      .modal-actions {
+        display: flex;
+        gap: 10px;
+        padding: 16px;
+        background: var(--bg-tertiary);
+      }
+
+      .modal-actions button {
+        flex: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="logo">Stay Calm AI</div>
+      <div class="status-badges">
+        <div class="badge">
+          <span class="badge-dot" id="connection-dot"></span>
+          <span id="connection-text">Connecting...</span>
+        </div>
+        <div class="badge">
+          <span class="badge-dot" id="stream-dot"></span>
+          <span id="stream-text">Stopped</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="container">
+      <div class="main-grid">
+        <div class="panel">
+          <div class="panel-header">
+            <div class="pair-selector">
+              <select id="pair-select">
+                <option value="BTC/USDT">BTC/USDT</option>
+                <option value="ETH/USDT">ETH/USDT</option>
+                <option value="SOL/USDT">SOL/USDT</option>
+              </select>
+              <select id="timeframe-select">
+                <option value="1s">1s</option>
+                <option value="1m">1m</option>
+                <option value="5m">5m</option>
+              </select>
+            </div>
+            <span id="scenario-badge" style="color: var(--text-secondary); font-size: 0.85rem;">
+              Scenario: normal
+            </span>
+          </div>
+          <div class="panel-body">
+            <div class="price-section">
+              <span class="price-main" id="current-price">$0.00</span>
+              <span class="price-change positive" id="price-change">+0.00%</span>
+            </div>
+
+            <div class="state-indicator normal" id="state-indicator">MARKET STATE: NORMAL</div>
+
+            <div class="chart-container">
+              <div class="chart-candles" id="chart-candles"></div>
+            </div>
+
+            <div class="metrics-grid">
+              <div class="metric-card">
+                <div class="metric-label">24h Change</div>
+                <div class="metric-value" id="metric-change">0.00%</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-label">Volume Ratio</div>
+                <div class="metric-value" id="metric-volume">1.00x</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-label">Price Range</div>
+                <div class="metric-value" id="metric-range">0.00%</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-label">Trades</div>
+                <div class="metric-value" id="metric-trades">0</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">Controls</div>
+          <div class="panel-body">
+            <div class="control-section">
+              <h4>Stream</h4>
+              <div class="button-row">
+                <button class="btn-primary" id="btn-start">Start</button>
+                <button class="btn-danger" id="btn-stop" disabled>Stop</button>
+                <button class="btn-secondary" id="btn-demo">Demo</button>
+              </div>
+            </div>
+
+            <div class="control-section">
+              <h4>Scenarios</h4>
+              <div class="scenario-grid">
+                <button class="btn-secondary btn-small" data-scenario="normal">Normal</button>
+                <button class="btn-secondary btn-small" data-scenario="uptrend">Uptrend</button>
+                <button class="btn-warning btn-small" data-scenario="volatile_dump">Volatile Dump</button>
+                <button class="btn-warning btn-small" data-scenario="volatile_pump">Volatile Pump</button>
+                <button class="btn-danger btn-small" data-scenario="flash_crash">Flash Crash</button>
+                <button class="btn-danger btn-small" data-scenario="flash_pump">Flash Pump</button>
+                <button class="btn-secondary btn-small" data-scenario="whale_dump">Whale Dump</button>
+                <button class="btn-secondary btn-small" data-scenario="whale_pump">Whale Pump</button>
+              </div>
+            </div>
+
+            <div class="control-section">
+              <h4>User Activity</h4>
+              <div class="button-row">
+                <button class="btn-secondary btn-small active" id="btn-viewing">Viewing</button>
+                <button class="btn-warning btn-small" id="btn-trading">Trading</button>
+              </div>
+            </div>
+
+            <div class="control-section">
+              <h4>Event Log</h4>
+              <div class="event-log" id="event-log">
+                <div class="log-entry">Waiting for connection...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="modal-overlay">
+      <div class="modal volatile" id="modal">
+        <div class="modal-header">
+          <div id="modal-title">Market Alert</div>
+        </div>
+        <div class="modal-body">
+          <p class="modal-message" id="modal-message">Loading...</p>
+          <div class="modal-signals">
+            <h5>What is happening</h5>
+            <ul id="modal-signals"></ul>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-primary" id="btn-explain">Explain more</button>
+          <button class="btn-secondary" id="btn-continue">Continue anyway</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      class MarketGuardianClient {
+        constructor() {
+          this.ws = null;
+          this.isConnected = false;
+          this.candles = [];
+          this.maxCandles = 60;
+          this.currentAlertId = null;
+          this.alertShownAt = null;
+          this.userActivity = "viewing_chart";
+
+          this.init();
+        }
+
+        init() {
+          this.connect();
+          this.setupUI();
+        }
+
+        connect() {
+          const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+          const wsUrl = `${protocol}//${window.location.host}/ws`;
+          this.ws = new WebSocket(wsUrl);
+
+          this.ws.onopen = () => {
+            this.isConnected = true;
+            this.updateConnectionStatus(true);
+            this.log("Connected to Market Guardian AI", "success");
+          };
+
+          this.ws.onclose = () => {
+            this.isConnected = false;
+            this.updateConnectionStatus(false);
+            this.log("Disconnected", "error");
+            setTimeout(() => this.connect(), 3000);
+          };
+
+          this.ws.onerror = () => {
+            this.log("Connection error", "error");
+          };
+
+          this.ws.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+            this.handleMessage(msg);
+          };
+        }
+
+        send(event, data = {}) {
+          if (this.isConnected) {
+            this.ws.send(JSON.stringify({ event, data }));
+          }
+        }
+
+        handleMessage(msg) {
+          const { event, data } = msg;
+          switch (event) {
+            case "connected":
+              if (data.candleHistory) {
+                this.candles = data.candleHistory.slice(-this.maxCandles);
+                this.renderChart();
+              }
+              break;
+            case "candle":
+              this.handleCandle(data);
+              break;
+            case "candle_closed":
+              this.handleCandleClosed(data);
+              break;
+            case "ticker":
+              this.handleTicker(data);
+              break;
+            case "risk_alert":
+              this.handleRiskAlert(data);
+              break;
+            case "state_change":
+              this.handleStateChange(data);
+              break;
+            case "stream_started":
+              this.updateStreamStatus(true);
+              this.log("Stream started", "success");
+              document.getElementById("btn-start").disabled = true;
+              document.getElementById("btn-stop").disabled = false;
+              break;
+            case "stream_stopped":
+              this.updateStreamStatus(false);
+              this.log("Stream stopped");
+              document.getElementById("btn-start").disabled = false;
+              document.getElementById("btn-stop").disabled = true;
+              break;
+            default:
+              break;
+          }
+        }
+
+        handleCandle(candle) {
+          const price = candle.close;
+          const change = ((candle.close - candle.open) / candle.open) * 100;
+
+          document.getElementById("current-price").textContent = `$${price.toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}`;
+
+          const changeEl = document.getElementById("price-change");
+          changeEl.textContent = `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`;
+          changeEl.className = `price-change ${change >= 0 ? "positive" : "negative"}`;
+
+          if (this.candles.length > 0) {
+            const lastCandle = this.candles[this.candles.length - 1];
+            if (!lastCandle.isClosed) {
+              lastCandle.high = Math.max(lastCandle.high, candle.high);
+              lastCandle.low = Math.min(lastCandle.low, candle.low);
+              lastCandle.close = candle.close;
+              lastCandle.volume += candle.volume;
+            }
+          }
+
+          this.renderChart();
+        }
+
+        handleCandleClosed(candle) {
+          this.candles.push(candle);
+          if (this.candles.length > this.maxCandles) {
+            this.candles.shift();
+          }
+          this.renderChart();
+        }
+
+        handleTicker(ticker) {
+          document.getElementById("metric-change").textContent = `${ticker.priceChangePercent >= 0 ? "+" : ""}${ticker.priceChangePercent}%`;
+          document.getElementById("metric-change").style.color = ticker.priceChangePercent >= 0 ? "var(--green)" : "var(--red)";
+          document.getElementById("metric-trades").textContent = ticker.trades.toLocaleString();
+        }
+
+        handleRiskAlert(data) {
+          this.currentAlertId = data.alertId;
+          this.alertShownAt = Date.now();
+          this.log(`RISK ALERT: ${data.riskLevel}`, "alert");
+
+          if (data.metrics) {
+            document.getElementById("metric-volume").textContent = `${data.metrics.volumeRatio}x`;
+            document.getElementById("metric-range").textContent = `${data.metrics.rangePercent}%`;
+          }
+
+          this.showRiskModal(data);
+        }
+
+        handleStateChange(data) {
+          if (data.type === "market_state") {
+            this.updateStateIndicator(data.currentState);
+            if (data.metrics) {
+              document.getElementById("metric-volume").textContent = `${data.metrics.volumeRatio}x`;
+              document.getElementById("metric-range").textContent = `${data.metrics.rangePercent}%`;
+            }
+          } else if (data.type === "scenario_changed") {
+            document.getElementById("scenario-badge").textContent = `Scenario: ${data.scenario}`;
+          }
+        }
+
+        showRiskModal(data) {
+          const overlay = document.getElementById("modal-overlay");
+          const modal = document.getElementById("modal");
+          const title = document.getElementById("modal-title");
+          const message = document.getElementById("modal-message");
+          const signalsList = document.getElementById("modal-signals");
+
+          const riskClass = data.riskLevel === "HIGH_RISK" ? "high-risk" : "volatile";
+          modal.className = `modal ${riskClass}`;
+          title.textContent = data.riskLevel === "HIGH_RISK" ? "High Market Uncertainty" : "Market Moving Fast";
+          message.textContent = data.message;
+          signalsList.innerHTML = (data.signals || []).map((s) => `<li>${s}</li>`).join("");
+
+          this.updateStateIndicator(data.riskLevel);
+          overlay.classList.add("visible");
+        }
+
+        hideRiskModal(response) {
+          document.getElementById("modal-overlay").classList.remove("visible");
+          if (this.currentAlertId) {
+            this.send("alert_response", { alertId: this.currentAlertId, response });
+            this.currentAlertId = null;
+            this.alertShownAt = null;
+          }
+        }
+
+        updateStateIndicator(state) {
+          const indicator = document.getElementById("state-indicator");
+          const stateClass = state.toLowerCase().replace("_", "-");
+          indicator.className = `state-indicator ${stateClass}`;
+          indicator.textContent = `MARKET STATE: ${state}`;
+        }
+
+        renderChart() {
+          const container = document.getElementById("chart-candles");
+          container.innerHTML = "";
+          if (this.candles.length === 0) return;
+
+          let minPrice = Infinity;
+          let maxPrice = -Infinity;
+          for (const candle of this.candles) {
+            minPrice = Math.min(minPrice, candle.low);
+            maxPrice = Math.max(maxPrice, candle.high);
+          }
+
+          const priceRange = maxPrice - minPrice || 1;
+          const containerHeight = 240;
+
+          for (const candle of this.candles) {
+            const candleEl = document.createElement("div");
+            candleEl.className = "candle";
+
+            const isGreen = candle.close >= candle.open;
+            const bodyTop = Math.max(candle.open, candle.close);
+            const bodyBottom = Math.min(candle.open, candle.close);
+
+            const highPercent = (candle.high - minPrice) / priceRange;
+            const lowPercent = (candle.low - minPrice) / priceRange;
+            const bodyTopPercent = (bodyTop - minPrice) / priceRange;
+            const bodyBottomPercent = (bodyBottom - minPrice) / priceRange;
+
+            const wickHeight = (highPercent - lowPercent) * containerHeight;
+            const bodyHeight = Math.max(2, (bodyTopPercent - bodyBottomPercent) * containerHeight);
+            const wickTop = (1 - highPercent) * containerHeight;
+            const bodyOffset = (highPercent - bodyTopPercent) * containerHeight;
+
+            const wick = document.createElement("div");
+            wick.className = "candle-wick";
+            wick.style.height = `${wickHeight}px`;
+            wick.style.marginTop = `${wickTop}px`;
+
+            const body = document.createElement("div");
+            body.className = `candle-body ${isGreen ? "green" : "red"}`;
+            body.style.height = `${bodyHeight}px`;
+            body.style.marginTop = `${bodyOffset - wickHeight}px`;
+
+            candleEl.appendChild(wick);
+            candleEl.appendChild(body);
+            container.appendChild(candleEl);
+          }
+        }
+
+        updateConnectionStatus(connected) {
+          const dot = document.getElementById("connection-dot");
+          const text = document.getElementById("connection-text");
+          dot.className = `badge-dot ${connected ? "connected" : ""}`;
+          text.textContent = connected ? "Connected" : "Disconnected";
+        }
+
+        updateStreamStatus(streaming) {
+          const dot = document.getElementById("stream-dot");
+          const text = document.getElementById("stream-text");
+          dot.className = `badge-dot ${streaming ? "streaming" : ""}`;
+          text.textContent = streaming ? "Streaming" : "Stopped";
+        }
+
+        log(message, type = "") {
+          const container = document.getElementById("event-log");
+          const time = new Date().toLocaleTimeString();
+          const entry = document.createElement("div");
+          entry.className = `log-entry ${type}`;
+          entry.textContent = `${time} ${message}`;
+          container.insertBefore(entry, container.firstChild);
+          while (container.children.length > 50) {
+            container.removeChild(container.lastChild);
+          }
+        }
+
+        setupUI() {
+          document.getElementById("btn-start").addEventListener("click", () => {
+            this.candles = [];
+            this.send("start_stream", {
+              mode: "normal",
+              speed: "normal",
+              pair: document.getElementById("pair-select").value,
+            });
+          });
+
+          document.getElementById("btn-stop").addEventListener("click", () => {
+            this.send("stop_stream");
+          });
+
+          document.getElementById("btn-demo").addEventListener("click", () => {
+            this.candles = [];
+            this.send("start_stream", {
+              mode: "demo",
+              speed: "normal",
+              pair: document.getElementById("pair-select").value,
+            });
+            this.log("Demo sequence started", "success");
+          });
+
+          document.getElementById("pair-select").addEventListener("change", (e) => {
+            this.send("set_pair", { pair: e.target.value });
+            this.candles = [];
+            this.log(`Pair changed to ${e.target.value}`);
+          });
+
+          document.getElementById("timeframe-select").addEventListener("change", (e) => {
+            this.send("set_timeframe", { timeframe: e.target.value });
+            this.log(`Timeframe changed to ${e.target.value}`);
+          });
+
+          document.querySelectorAll("[data-scenario]").forEach((btn) => {
+            btn.addEventListener("click", () => {
+              const scenario = btn.dataset.scenario;
+              this.send("set_scenario", { scenario, duration: 15, intensity: 1.0 });
+              this.log(`Scenario: ${scenario}`, "alert");
+            });
+          });
+
+          document.getElementById("btn-viewing").addEventListener("click", () => {
+            this.userActivity = "viewing_chart";
+            this.send("user_activity", { activity: "viewing_chart" });
+            document.getElementById("btn-viewing").classList.add("active");
+            document.getElementById("btn-trading").classList.remove("active");
+          });
+
+          document.getElementById("btn-trading").addEventListener("click", () => {
+            this.userActivity = "placing_order";
+            this.send("user_activity", { activity: "placing_order" });
+            document.getElementById("btn-trading").classList.add("active");
+            document.getElementById("btn-viewing").classList.remove("active");
+          });
+
+          document.getElementById("btn-explain").addEventListener("click", () => {
+            this.hideRiskModal("waited");
+          });
+
+          document.getElementById("btn-continue").addEventListener("click", () => {
+            this.hideRiskModal("continued");
+          });
+
+          document.getElementById("modal-overlay").addEventListener("click", (e) => {
+            if (e.target.id === "modal-overlay") {
+              this.hideRiskModal("dismissed");
+            }
+          });
+
+          setInterval(() => {
+            if (this.isConnected) {
+              this.send("ping");
+            }
+          }, 30000);
+        }
+      }
+
+      new MarketGuardianClient();
+    </script>
+  </body>
+</html>

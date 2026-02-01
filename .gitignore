@@ -51,3 +51,6 @@ Thumbs.db
 .env
 twinciti-487e7474966c.json
 firebase.json
+
+# market data
+market_data/
