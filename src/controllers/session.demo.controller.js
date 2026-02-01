@@ -1,4 +1,4 @@
-import { Session } from '../models/index.js';
+import { Session, Event, Intervention } from '../models/index.js';
 import { addTick, getWindow } from '../services/market.window.store.js';
 import { analyzeMarket, resetSession } from '../services/market.risk.engine.js';
 import { generateExplanation } from '../services/explanation.generator.js';
@@ -33,15 +33,31 @@ function validateCandle(candle) {
   return null;
 }
 
+async function ensureSession(sessionId, metadata = {}) {
+  if (sessionId) return sessionId;
+  try {
+    const session = await Session.create({
+      metadata: { source: 'api', ...metadata },
+    });
+    resetSession(session.id);
+    baselineBySession.set(session.id, []);
+    return session.id;
+  } catch {
+    return null;
+  }
+}
+
 async function buildMarketResponse({ sessionId, candle, userContext }) {
-  const window = addTick(sessionId, candle);
-  const baseline = baselineBySession.get(sessionId || 'global') || [];
+  const activeSessionId = await ensureSession(sessionId);
+  const targetSessionId = activeSessionId || sessionId || 'global';
+  const window = addTick(targetSessionId, candle);
+  const baseline = baselineBySession.get(targetSessionId) || [];
   if (baseline.length < 30) {
     baseline.push(candle);
-    baselineBySession.set(sessionId || 'global', baseline);
+    baselineBySession.set(targetSessionId, baseline);
   }
 
-  const analysis = analyzeMarket(window, baseline, sessionId || 'global');
+  const analysis = analyzeMarket(window, baseline, targetSessionId);
 
   let explanation = null;
   if (analysis.shouldTrigger) {
@@ -53,6 +69,49 @@ async function buildMarketResponse({ sessionId, candle, userContext }) {
     });
   }
 
+  if (activeSessionId) {
+    Event.create({
+      sessionId: activeSessionId,
+      actionType: 'MARKET_EVENT',
+      volatilityFlag: analysis.state !== 'NORMAL',
+      meta: {
+        candle,
+        analysis: {
+          state: analysis.state,
+          whatHappened: analysis.whatHappened,
+          signals: analysis.signals,
+          metrics: analysis.metrics,
+        },
+      },
+    }).catch(() => {});
+
+    if (analysis.shouldTrigger && explanation?.message) {
+      Event.create({
+        sessionId: activeSessionId,
+        actionType: 'RISK_TRIGGERED',
+        volatilityFlag: true,
+        meta: {
+          state: analysis.state,
+          whatHappened: analysis.whatHappened,
+          signals: analysis.signals,
+          metrics: analysis.metrics,
+        },
+      }).catch(() => {});
+
+      Intervention.create({
+        sessionId: activeSessionId,
+        reason: analysis.whatHappened || 'risk_trigger',
+        message: explanation.message,
+        model: 'template',
+        meta: {
+          state: analysis.state,
+          signals: analysis.signals,
+          metrics: analysis.metrics,
+        },
+      }).catch(() => {});
+    }
+  }
+
   return {
     riskDetected: analysis.shouldTrigger,
     state: analysis.state,
@@ -61,6 +120,7 @@ async function buildMarketResponse({ sessionId, candle, userContext }) {
     signals: analysis.signals,
     whatHappened: analysis.whatHappened,
     metrics: analysis.metrics,
+    sessionId: activeSessionId || sessionId || null,
   };
 }
 
@@ -75,6 +135,11 @@ export const startSession = async (req, res) => {
     });
     resetSession(session.id);
     baselineBySession.set(session.id, []);
+    Event.create({
+      sessionId: session.id,
+      actionType: 'SESSION_STARTED',
+      meta: { source: 'api' },
+    }).catch(() => {});
     res.status(201).json({ sessionId: session.id, message: 'Session started' });
   } catch (error) {
     res.status(500).json({ error: error.message });

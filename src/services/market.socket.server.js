@@ -6,6 +6,7 @@ import { WebSocketServer } from 'ws';
 import { v4 as uuidv4 } from 'uuid';
 
 import { MarketDataService, SCENARIOS } from './market.data.service.js';
+import { Session, Event, Intervention, Candle } from '../models/index.js';
 import { analyzeMarket, resetSession } from './market.risk.engine.js';
 import { generateExplanation } from './explanation.generator.js';
 import {
@@ -22,14 +23,35 @@ class ClientManager {
     this.clients = new Map();
   }
 
-  add(ws, req) {
+  async add(ws, req) {
     const clientId = uuidv4();
     const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     const userAgent = req.headers['user-agent'];
+    let dbSessionId = null;
+
+    try {
+      const session = await Session.create({
+        metadata: {
+          source: 'websocket',
+          clientId,
+          ipAddress,
+          userAgent,
+        },
+      });
+      dbSessionId = session.id;
+      Event.create({
+        sessionId: dbSessionId,
+        actionType: 'SESSION_STARTED',
+        meta: { source: 'websocket' },
+      }).catch(() => {});
+    } catch {
+      // Ignore DB errors for demo flow
+    }
 
     const client = {
       ws,
       clientId,
+      dbSessionId,
       connectedAt: Date.now(),
       ipAddress,
       userAgent,
@@ -45,7 +67,18 @@ class ClientManager {
     return clientId;
   }
 
-  remove(clientId) {
+  async remove(clientId) {
+    const client = this.clients.get(clientId);
+    if (client?.dbSessionId) {
+      try {
+        await Session.update(
+          { endedAt: new Date() },
+          { where: { id: client.dbSessionId } }
+        );
+      } catch {
+        // Ignore DB errors on disconnect
+      }
+    }
     this.clients.delete(clientId);
   }
 
@@ -140,6 +173,7 @@ class SocketHandler {
       }
 
       this.clientManager.broadcast(WS_EVENTS.SERVER.CANDLE_CLOSED, candle);
+      this.#storeClosedCandle(candle);
       await this.#analyzeRisk();
     });
 
@@ -183,8 +217,7 @@ class SocketHandler {
         });
 
         const alertId = `alert-${Date.now()}`;
-        this.clientManager.broadcast(WS_EVENTS.SERVER.RISK_ALERT, {
-          alertId,
+        const alertMeta = {
           riskLevel: analysis.state,
           previousState: analysis.previousState,
           transition: analysis.transitionType,
@@ -193,6 +226,10 @@ class SocketHandler {
           message: explanation.message,
           metrics: analysis.metrics,
           pair: this.marketService.pair,
+        };
+        this.clientManager.broadcast(WS_EVENTS.SERVER.RISK_ALERT, {
+          alertId,
+          ...alertMeta,
           timestamp: Date.now(),
           generationMeta: {
             source: 'template',
@@ -200,8 +237,24 @@ class SocketHandler {
           },
         });
 
-        this.clientManager.clients.forEach((_, clientId) => {
+        this.clientManager.clients.forEach((client, clientId) => {
           this.clientManager.setLastAlert(clientId, alertId);
+          if (!client?.dbSessionId) return;
+
+          Event.create({
+            sessionId: client.dbSessionId,
+            actionType: 'RISK_TRIGGERED',
+            volatilityFlag: analysis.state !== 'NORMAL',
+            meta: alertMeta,
+          }).catch(() => {});
+
+          Intervention.create({
+            sessionId: client.dbSessionId,
+            reason: analysis.whatHappened || 'risk_trigger',
+            message: explanation.message,
+            model: 'template',
+            meta: alertMeta,
+          }).catch(() => {});
         });
       }
 
@@ -220,7 +273,7 @@ class SocketHandler {
 
   #setupWebSocketServer() {
     this.wss.on('connection', async (ws, req) => {
-      const clientId = this.clientManager.add(ws, req);
+      const clientId = await this.clientManager.add(ws, req);
 
       this.clientManager.send(clientId, WS_EVENTS.SERVER.CONNECTED, {
         clientId,
@@ -307,10 +360,12 @@ class SocketHandler {
     }
 
     this.marketService.start();
+    this.#logClientEvent(clientId, 'STREAM_STARTED', { mode, speed, pair });
   }
 
-  #handleStopStream() {
+  #handleStopStream(clientId) {
     this.marketService.stop();
+    this.#logClientEvent(clientId, 'STREAM_STOPPED', {});
   }
 
   #handleSetScenario(clientId, data) {
@@ -381,6 +436,7 @@ class SocketHandler {
   #handleUserActivity(clientId, data) {
     const { activity } = data || {};
     this.clientManager.updateActivity(clientId, activity);
+    this.#logClientEvent(clientId, 'USER_ACTIVITY', { activity });
   }
 
   #handleAlertResponse(clientId, data) {
@@ -398,18 +454,36 @@ class SocketHandler {
       });
       return;
     }
+
+    this.#logClientEvent(clientId, 'ALERT_RESPONSE', {
+      alertId: targetAlertId,
+      response,
+    });
   }
 
   #handleGetOrderBook(clientId, data = {}) {
     const depth = data.depth || STREAM_CONFIG.ORDERBOOK_DEPTH;
     const orderBook = this.marketService.getOrderBook(depth);
     this.clientManager.send(clientId, WS_EVENTS.SERVER.ORDERBOOK, orderBook);
+    this.#logClientEvent(clientId, 'ORDERBOOK_REQUEST', { depth });
   }
 
   #handleGetTrades(clientId, data = {}) {
     const count = data.count || 50;
     const trades = this.marketService.getRecentTrades(count);
     this.clientManager.send(clientId, WS_EVENTS.SERVER.TRADE, { trades });
+    this.#logClientEvent(clientId, 'TRADES_REQUEST', { count });
+  }
+
+  #logClientEvent(clientId, actionType, meta) {
+    const client = this.clientManager.get(clientId);
+    if (!client?.dbSessionId) return;
+    Event.create({
+      sessionId: client.dbSessionId,
+      actionType,
+      volatilityFlag: actionType === 'RISK_TRIGGERED',
+      meta: meta || {},
+    }).catch(() => {});
   }
 
   #queueDemoSequence() {
@@ -419,6 +493,30 @@ class SocketHandler {
     setTimeout(() => this.marketService.setScenario(SCENARIOS.UPTREND, 10), 36000);
     setTimeout(() => this.marketService.setScenario(SCENARIOS.FLASH_CRASH, 8), 48000);
     setTimeout(() => this.marketService.setScenario(SCENARIOS.NORMAL, 20), 58000);
+  }
+
+  #storeClosedCandle(candle) {
+    this.clientManager.clients.forEach((client) => {
+      if (!client?.dbSessionId) return;
+      Candle.create({
+        sessionId: client.dbSessionId,
+        symbol: candle.symbol,
+        timeframe: candle.timeframe,
+        openTime: new Date(candle.openTime),
+        closeTime: new Date(candle.closeTime),
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume,
+        quoteVolume: candle.quoteVolume,
+        trades: candle.trades,
+        takerBuyVolume: candle.takerBuyVolume,
+        takerBuyQuoteVolume: candle.takerBuyQuoteVolume,
+        scenario: candle.scenario || null,
+        meta: {},
+      }).catch(() => {});
+    });
   }
 
   getStats() {
