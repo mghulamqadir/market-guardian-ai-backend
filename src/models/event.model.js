@@ -13,6 +13,7 @@ const Event = sequelize.define(
     sessionId: {
       type: uuid,
       allowNull: false,
+      field: 'session_id',
     },
 
     ts: {
@@ -24,6 +25,7 @@ const Event = sequelize.define(
     actionType: {
       type: string(80),
       allowNull: false,
+      field: 'action_type',
     },
 
     meta: {
@@ -36,6 +38,7 @@ const Event = sequelize.define(
       type: boolean,
       allowNull: false,
       defaultValue: false,
+      field: 'volatility_flag',
     },
   },
   {

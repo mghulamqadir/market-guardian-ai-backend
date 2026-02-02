@@ -15,23 +15,27 @@ const Session = sequelize.define(
     userId: {
       type: uuid,
       allowNull: true,
+      field: 'user_id',
     },
 
     startedAt: {
       type: date,
       allowNull: false,
+      field: 'started_at',
       defaultValue: () => new Date(),
     },
 
     endedAt: {
       type: date,
       allowNull: true,
+      field: 'ended_at',
     },
 
     // ✅ cooldown state (store last intervention timestamp)
     lastInterventionAt: {
       type: date,
       allowNull: true,
+      field: 'last_intervention_at',
     },
 
     metadata: {

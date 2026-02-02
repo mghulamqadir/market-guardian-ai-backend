@@ -10,4 +10,5 @@ export const uuidv4 = DataTypes.UUIDV4;
 export const jsonb = DataTypes.JSONB;
 export const dataEnum = DataTypes.ENUM;
 export const bigInt = DataTypes.BIGINT;
+export const decimal = DataTypes.DECIMAL;
 

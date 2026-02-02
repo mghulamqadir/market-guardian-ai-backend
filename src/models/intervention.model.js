@@ -13,6 +13,7 @@ const Intervention = sequelize.define(
     sessionId: {
       type: uuid,
       allowNull: false,
+      field: 'session_id',
     },
 
     ts: {
