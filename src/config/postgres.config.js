@@ -42,14 +42,14 @@ async function connectWithRetry() {
     try {
       await sequelize.authenticate();
       console.log(`PostgreSQL connected: ${DB_HOST}:${DB_PORT}/${DB_NAME}`);
-      
+
       // Sync models with database (creates tables if they don't exist)
       // In production, use migrations instead
       if (process.env.ENV === 'development') {
         await sequelize.sync({ alter: false });
         console.log('Database tables synchronized');
       }
-      
+
       break;
     } catch (error) {
       attempt++;

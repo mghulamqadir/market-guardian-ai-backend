@@ -39,7 +39,7 @@ const signupSchema = Joi.object({
     .messages({
       'string.min': 'Password must be at least 8 characters.',
       'string.pattern.base':
-        'Password must contain 1 number, 1 lowercase letter, 1 uppercase letter, 1 special character, and no spaces are allwoed at the start or end.',
+        'Password must contain 1 number, 1 lowercase letter, 1 uppercase letter, 1 special character, and no spaces are allowed at the start or end.',
       'any.required': 'Password is required.',
     }),
   confirmPassword: Joi.string().required().valid(Joi.ref('password')).messages({

@@ -43,9 +43,9 @@ class ClientManager {
         sessionId: dbSessionId,
         actionType: 'SESSION_STARTED',
         meta: { source: 'websocket' },
-      }).catch(() => {});
-    } catch {
-      // Ignore DB errors for demo flow
+      }).catch((err) => console.log('Failed to create event', err));
+    } catch (err) {
+      console.log('Failed to create session', err);
     }
 
     const client = {
@@ -246,7 +246,7 @@ class SocketHandler {
             actionType: 'RISK_TRIGGERED',
             volatilityFlag: analysis.state !== 'NORMAL',
             meta: alertMeta,
-          }).catch(() => {});
+          }).catch((err) => console.error('[WebSocket] Failed to create RISK_TRIGGERED event:', err.message));
 
           Intervention.create({
             sessionId: client.dbSessionId,
@@ -254,7 +254,7 @@ class SocketHandler {
             message: explanation.message,
             model: 'template',
             meta: alertMeta,
-          }).catch(() => {});
+          }).catch((err) => console.error('[WebSocket] Failed to create intervention:', err.message));
         });
       }
 
@@ -483,7 +483,7 @@ class SocketHandler {
       actionType,
       volatilityFlag: actionType === 'RISK_TRIGGERED',
       meta: meta || {},
-    }).catch(() => {});
+    }).catch((err) => console.log('Failed to create event', err));
   }
 
   #queueDemoSequence() {
@@ -515,7 +515,7 @@ class SocketHandler {
         takerBuyQuoteVolume: candle.takerBuyQuoteVolume,
         scenario: candle.scenario || null,
         meta: {},
-      }).catch(() => {});
+      }).catch((err) => console.log('Failed to create candle', err));
     });
   }
 

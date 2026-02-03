@@ -87,10 +87,8 @@ export async function login({ email, password }) {
   }
 
   const emailLower = normalizeEmail(email);
-  console.log('Login attempt for email:', emailLower);
 
   const user = await User.findOne({ where: { emailLower } });
-  console.log('User found:', user ? user.email : 'No user found');
 
   if (!user) {
     throw ApiError(404, 'Invalid email or password', [
@@ -138,7 +136,7 @@ export async function login({ email, password }) {
       newCode: code,
       purpose: 'signup',
     });
-    await sendVerificationEmail(userData, code);
+    await sendVerificationEmail(user, code);
   }
 
   return response;
