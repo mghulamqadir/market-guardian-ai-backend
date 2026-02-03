@@ -44,7 +44,7 @@ const Otp = sequelize.define(
             type: date,
             allowNull: false,
             field: 'expire_at',
-            defaultValue: () => new Date(Date.now() + 60 * 1000), // 60 seconds from now
+            defaultValue: () => new Date(Date.now() + 15 * 60 * 1000), // 900 seconds from now
         },
     },
     {
