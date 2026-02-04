@@ -20,7 +20,7 @@ const options = {
         description: 'Development server',
       },
       {
-        url: 'https://api.marketguardian.com',
+        url: 'https://market-guardian-be.onrender.com',
         description: 'Production server',
       },
     ],
