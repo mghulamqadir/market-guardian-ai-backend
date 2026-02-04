@@ -158,8 +158,24 @@ class SocketHandler {
   }
 
   #setupMarketServiceListeners() {
-    this.marketService.on('candle', (candle) => {
+    // Throttle immediate risk checks to max once every 5 seconds
+    const RISK_CHECK_COOLDOWN_MS = 5000;
+    let lastRiskCheckTime = 0;
+
+    this.marketService.on('candle', async (candle) => {
       this.clientManager.broadcast(WS_EVENTS.SERVER.CANDLE, candle);
+
+      // Immediate check for significant volatility (throttled)
+      // This catches intraday drops/pumps without waiting for candle close
+      const now = Date.now();
+      if (now - lastRiskCheckTime >= RISK_CHECK_COOLDOWN_MS) {
+        // Simple pre-check: only analyze if there's notable movement (>0.5%) to save resources
+        const priceChange = Math.abs((candle.close - candle.open) / candle.open) * 100;
+        if (priceChange > 0.5) {
+          lastRiskCheckTime = now;
+          await this.#analyzeRisk(candle);
+        }
+      }
     });
 
     this.marketService.on('candle_closed', async (candle) => {
@@ -198,44 +214,75 @@ class SocketHandler {
     });
   }
 
-  async #analyzeRisk() {
+  async #analyzeRisk(activeCandle = null) {
     if (this.isProcessingRisk) return;
-    if (this.candleHistory.length < 5) return;
+    if (this.candleHistory.length < 5 && !activeCandle) return;
 
     this.isProcessingRisk = true;
 
     try {
-      const analysis = analyzeMarket(this.candleHistory, this.baselineCandles, 'global');
+      // If we have an active candle (intraday check), append it to history for analysis
+      const analysisHistory = activeCandle
+        ? [...this.candleHistory, activeCandle]
+        : this.candleHistory;
+
+      const analysis = analyzeMarket(analysisHistory, this.baselineCandles, 'global');
 
       if (analysis.shouldTrigger) {
         const userContext = this.clientManager.getPrimaryActivity();
-        const explanation = await generateExplanation({
-          market_state: analysis.state,
-          what_happened: analysis.whatHappened,
-          signals: analysis.signals,
-          user_context: userContext,
-        });
-
         const alertId = `alert-${Date.now()}`;
+        const generationStart = Date.now();
+
         const alertMeta = {
           riskLevel: analysis.state,
           previousState: analysis.previousState,
           transition: analysis.transitionType,
           whatHappened: analysis.whatHappened,
           signals: analysis.signals,
-          message: explanation.message,
           metrics: analysis.metrics,
           pair: this.marketService.pair,
         };
         this.clientManager.broadcast(WS_EVENTS.SERVER.RISK_ALERT, {
           alertId,
           ...alertMeta,
+          message: 'Generating explanation...',
           timestamp: Date.now(),
+          streaming: true,
           generationMeta: {
-            source: 'template',
+            source: 'streaming',
             timeMs: 0,
           },
         });
+
+        const explanation = await generateExplanation(
+          {
+            market_state: analysis.state,
+            what_happened: analysis.whatHappened,
+            signals: analysis.signals,
+            user_context: userContext,
+          },
+          (partialText) => {
+            this.clientManager.broadcast('explanation_chunk', {
+              alertId,
+              partialText,
+              timestamp: Date.now(),
+            });
+          }
+        );
+
+        const generationTime = Date.now() - generationStart;
+
+        this.clientManager.broadcast('explanation_complete', {
+          alertId,
+          message: explanation.message,
+          source: explanation.source,
+          confidence: explanation.confidence,
+          tags: explanation.tags,
+          generationTimeMs: generationTime,
+          timestamp: Date.now(),
+        });
+
+        alertMeta.message = explanation.message;
 
         this.clientManager.clients.forEach((client, clientId) => {
           this.clientManager.setLastAlert(clientId, alertId);
@@ -245,15 +292,15 @@ class SocketHandler {
             sessionId: client.dbSessionId,
             actionType: 'RISK_TRIGGERED',
             volatilityFlag: analysis.state !== 'NORMAL',
-            meta: alertMeta,
+            meta: { ...alertMeta, generationTimeMs: generationTime },
           }).catch((err) => console.error('[WebSocket] Failed to create RISK_TRIGGERED event:', err.message));
 
           Intervention.create({
             sessionId: client.dbSessionId,
             reason: analysis.whatHappened || 'risk_trigger',
             message: explanation.message,
-            model: 'template',
-            meta: alertMeta,
+            model: explanation.source === 'llm' ? 'gpt-4o-mini' : 'failsafe',
+            meta: { ...alertMeta, generationTimeMs: generationTime },
           }).catch((err) => console.error('[WebSocket] Failed to create intervention:', err.message));
         });
       }
