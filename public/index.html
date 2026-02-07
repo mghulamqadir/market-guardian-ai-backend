@@ -627,6 +627,9 @@
         this.userActivity = "viewing_chart";
         this.streamingAlertId = null;
         this.fallbackTimeout = null;
+        this.streamTextByAlert = new Map();
+        this.followupRequestedForAlert = null;
+        this.followupUsedForAlert = null;
 
         this.init();
       }
@@ -668,6 +671,41 @@
         if (this.isConnected) {
           this.ws.send(JSON.stringify({ event, data }));
         }
+      }
+
+      clearFallbackTimeout() {
+        if (this.fallbackTimeout) {
+          clearTimeout(this.fallbackTimeout);
+          this.fallbackTimeout = null;
+        }
+      }
+
+      setExplainButtonLoading(isLoading) {
+        const explainBtn = document.getElementById("btn-explain");
+        if (!explainBtn) return;
+        explainBtn.disabled = isLoading;
+        explainBtn.textContent = isLoading ? "Generating..." : "Explain more";
+      }
+
+      setExplainButtonUsed() {
+        const explainBtn = document.getElementById("btn-explain");
+        if (!explainBtn) return;
+        explainBtn.disabled = true;
+        explainBtn.textContent = "Analysis shown";
+      }
+
+      startFallbackTimeout(fallbackMessage) {
+        this.clearFallbackTimeout();
+        this.fallbackTimeout = setTimeout(() => {
+          const messageEl = document.getElementById("modal-message");
+          if (!messageEl) return;
+          if (messageEl.classList.contains("loading")) {
+            messageEl.classList.remove("loading", "streaming");
+            messageEl.textContent = fallbackMessage;
+            this.log("Explanation fallback used (timeout)", "alert");
+            this.setExplainButtonLoading(false);
+          }
+        }, 3000);
       }
 
       handleMessage(msg) {
@@ -760,6 +798,9 @@
       handleRiskAlert(data) {
         this.currentAlertId = data.alertId;
         this.alertShownAt = Date.now();
+        this.followupRequestedForAlert = null;
+        this.followupUsedForAlert = null;
+        this.setExplainButtonLoading(false);
         this.log(`RISK ALERT: ${data.riskLevel}`, "alert");
 
         if (data.metrics) {
@@ -772,15 +813,8 @@
         // If streaming, setup fallback timeout
         if (data.streaming) {
           this.streamingAlertId = data.alertId;
-          // Show fallback after 3 seconds if no chunks received
-          this.fallbackTimeout = setTimeout(() => {
-            const messageEl = document.getElementById("modal-message");
-            if (messageEl.classList.contains('loading')) {
-              messageEl.classList.remove('loading', 'streaming');
-              messageEl.textContent = 'Market conditions changed measurably. Price movement variance increased compared to previous intervals.';
-              this.log('Explanation fallback used (timeout)', 'alert');
-            }
-          }, 3000);
+          this.streamTextByAlert.set(data.alertId, "");
+          this.startFallbackTimeout("Market conditions changed measurably. Price movement variance increased compared to previous intervals.");
         }
       }
 
@@ -789,15 +823,15 @@
         if (data.alertId !== this.streamingAlertId) return;
 
         // Clear fallback timeout on first chunk
-        if (this.fallbackTimeout) {
-          clearTimeout(this.fallbackTimeout);
-          this.fallbackTimeout = null;
-        }
+        this.clearFallbackTimeout();
 
         const messageEl = document.getElementById("modal-message");
-        messageEl.classList.remove('loading');
-        messageEl.classList.add('streaming');
-        messageEl.textContent = data.partialText;
+        const previousText = this.streamTextByAlert.get(data.alertId) || "";
+        const nextText = previousText + (data.partialText || "");
+        this.streamTextByAlert.set(data.alertId, nextText);
+        messageEl.classList.remove("loading");
+        messageEl.classList.add("streaming");
+        messageEl.textContent = nextText;
       }
 
       handleExplanationComplete(data) {
@@ -805,17 +839,20 @@
         if (data.alertId !== this.streamingAlertId) return;
 
         // Clear fallback timeout
-        if (this.fallbackTimeout) {
-          clearTimeout(this.fallbackTimeout);
-          this.fallbackTimeout = null;
-        }
+        this.clearFallbackTimeout();
 
         const messageEl = document.getElementById("modal-message");
-        messageEl.classList.remove('streaming', 'loading');
+        messageEl.classList.remove("streaming", "loading");
         messageEl.textContent = data.message;
 
+        this.streamTextByAlert.delete(data.alertId);
         this.streamingAlertId = null;
-        this.log(`Explanation generated in ${data.generationTimeMs}ms (${data.source})`, 'success');
+        if (this.followupRequestedForAlert === data.alertId) {
+          this.followupRequestedForAlert = null;
+          this.followupUsedForAlert = data.alertId;
+          this.setExplainButtonUsed();
+        }
+        this.log(`Explanation generated in ${data.generationTimeMs}ms (${data.source})`, "success");
       }
 
       handleStateChange(data) {
@@ -840,13 +877,18 @@
         const riskClass = data.riskLevel === "HIGH_RISK" ? "high-risk" : "volatile";
         modal.className = `modal ${riskClass}`;
         title.textContent = data.riskLevel === "HIGH_RISK" ? "High Market Uncertainty" : "Market Moving Fast";
+        if (this.followupUsedForAlert === this.currentAlertId) {
+          this.setExplainButtonUsed();
+        } else {
+          this.setExplainButtonLoading(false);
+        }
 
         // Handle message display based on streaming status
         if (data.streaming) {
-          message.className = 'modal-message loading';
-          message.textContent = 'Loading explanation...';
+          message.className = "modal-message loading";
+          message.textContent = "Loading explanation...";
         } else {
-          message.className = 'modal-message';
+          message.className = "modal-message";
           message.textContent = data.message;
         }
 
@@ -857,21 +899,43 @@
       }
 
       hideRiskModal(response) {
-        document.getElementById("modal-overlay").classList.remove("visible");
+        if (response === "waited" && this.currentAlertId) {
+          if (this.followupUsedForAlert === this.currentAlertId) {
+            return;
+          }
+          if (this.followupRequestedForAlert === this.currentAlertId) {
+            return;
+          }
 
-        // Clear any pending fallback timeout
-        if (this.fallbackTimeout) {
-          clearTimeout(this.fallbackTimeout);
-          this.fallbackTimeout = null;
+          this.followupRequestedForAlert = this.currentAlertId;
+          this.streamingAlertId = this.currentAlertId;
+          this.streamTextByAlert.set(this.currentAlertId, "");
+          this.send("alert_response", { alertId: this.currentAlertId, response });
+
+          const messageEl = document.getElementById("modal-message");
+          messageEl.classList.remove("streaming");
+          messageEl.classList.add("loading");
+          messageEl.textContent = "Generating fuller explanation...";
+
+          this.setExplainButtonLoading(true);
+          this.startFallbackTimeout("Risk stayed elevated after your pause. Volume and range remained above normal, so uncertainty remained high.");
+          return;
         }
+
+        document.getElementById("modal-overlay").classList.remove("visible");
+        this.clearFallbackTimeout();
+        this.setExplainButtonLoading(false);
 
         if (this.currentAlertId) {
           this.send("alert_response", { alertId: this.currentAlertId, response });
-          this.currentAlertId = null;
-          this.alertShownAt = null;
         }
 
+        this.currentAlertId = null;
+        this.alertShownAt = null;
+        this.followupRequestedForAlert = null;
+        this.followupUsedForAlert = null;
         this.streamingAlertId = null;
+        this.streamTextByAlert.clear();
       }
 
       updateStateIndicator(state) {

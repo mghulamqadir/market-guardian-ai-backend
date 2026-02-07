@@ -158,6 +158,10 @@ class SocketHandler {
     this.currentTimeframe = '1m';
     this.derivSubscription = null;
 
+    // Keep alert context so follow-up explanation can target the same alertId.
+    this.alertContexts = new Map();
+    this.alertContextTtlMs = 10 * 60 * 1000;
+
     this._setupMarketServiceListeners();
     this._setupWebSocketServer();
   }
@@ -219,6 +223,61 @@ class SocketHandler {
     });
   }
 
+  _createAlertContext(alertId, analysis, userContext) {
+    const latestCandle = this.candleHistory[this.candleHistory.length - 1] || null;
+    const metrics = {
+      ...(analysis.metrics || {}),
+      priceChangePercent: analysis?.metrics?.percentChange,
+      trades: latestCandle?.trades ?? analysis?.metrics?.tradeCountRatio ?? null,
+    };
+
+    return {
+      alertId,
+      riskLevel: analysis.state,
+      previousState: analysis.previousState,
+      shortAlertMessage: `Risk moved to ${analysis.state}. ${analysis.whatHappened || 'Conditions changed quickly.'}`,
+      whatHappened: analysis.whatHappened,
+      signals: analysis.signals || [],
+      metrics,
+      pair: this.currentPair || this.marketService.pair,
+      timeframe: this.currentTimeframe || this.marketService.timeframe,
+      recentCandleBehavior: this._summarizeRecentCandleBehavior(),
+      userContext,
+      createdAt: Date.now(),
+      followupInProgress: false,
+      followupUsed: false,
+    };
+  }
+
+  _summarizeRecentCandleBehavior() {
+    const recent = this.candleHistory.slice(-5);
+    if (recent.length === 0) return null;
+
+    const upCount = recent.filter((c) => c.close > c.open).length;
+    const downCount = recent.filter((c) => c.close < c.open).length;
+    const avgRangePercent = recent.reduce((sum, c) => {
+      const avgPrice = (c.high + c.low) / 2 || c.close || 1;
+      return sum + (((c.high - c.low) / avgPrice) * 100);
+    }, 0) / recent.length;
+
+    if (upCount >= 4) {
+      return `${upCount} of last ${recent.length} candles closed up with average intraperiod range ${avgRangePercent.toFixed(2)}%`;
+    }
+    if (downCount >= 4) {
+      return `${downCount} of last ${recent.length} candles closed down with average intraperiod range ${avgRangePercent.toFixed(2)}%`;
+    }
+    return `Recent candles alternated direction with average intraperiod range ${avgRangePercent.toFixed(2)}%`;
+  }
+
+  _pruneAlertContexts() {
+    const cutoff = Date.now() - this.alertContextTtlMs;
+    for (const [alertId, context] of this.alertContexts.entries()) {
+      if ((context?.createdAt || 0) < cutoff) {
+        this.alertContexts.delete(alertId);
+      }
+    }
+  }
+
   async _analyzeRisk(activeCandle = null) {
     if (this.isProcessingRisk) return;
     if (this.candleHistory.length < 5 && !activeCandle) return;
@@ -247,6 +306,14 @@ class SocketHandler {
           metrics: analysis.metrics,
           pair: this.marketService.pair,
         };
+
+        this._pruneAlertContexts();
+        this.alertContexts.set(alertId, this._createAlertContext(alertId, analysis, userContext));
+
+        this.clientManager.clients.forEach((_, clientId) => {
+          this.clientManager.setLastAlert(clientId, alertId);
+        });
+
         this.clientManager.broadcast(WS_EVENTS.SERVER.RISK_ALERT, {
           alertId,
           ...alertMeta,
@@ -262,8 +329,18 @@ class SocketHandler {
         const explanation = await generateExplanation(
           {
             market_state: analysis.state,
+            riskLevel: analysis.state,
+            previousState: analysis.previousState,
             what_happened: analysis.whatHappened,
             signals: analysis.signals,
+            metrics: {
+              ...(analysis.metrics || {}),
+              priceChangePercent: analysis?.metrics?.percentChange,
+              trades: this.candleHistory[this.candleHistory.length - 1]?.trades ?? analysis?.metrics?.tradeCountRatio ?? null,
+            },
+            pair: this.currentPair || this.marketService.pair,
+            timeframe: this.currentTimeframe || this.marketService.timeframe,
+            recentCandleBehavior: this._summarizeRecentCandleBehavior(),
             user_context: userContext,
           },
           (partialText) => {
@@ -272,7 +349,8 @@ class SocketHandler {
               partialText,
               timestamp: Date.now(),
             });
-          }
+          },
+          { mode: 'short' }
         );
 
         const generationTime = Date.now() - generationStart;
@@ -286,6 +364,13 @@ class SocketHandler {
           generationTimeMs: generationTime,
           timestamp: Date.now(),
         });
+
+        const alertContext = this.alertContexts.get(alertId);
+        if (alertContext) {
+          alertContext.shortAlertMessage = explanation.message;
+          alertContext.updatedAt = Date.now();
+          this.alertContexts.set(alertId, alertContext);
+        }
 
         alertMeta.message = explanation.message;
 
@@ -395,6 +480,7 @@ class SocketHandler {
     resetSession('global');
     this.candleHistory = [];
     this.baselineCandles = [];
+    this.alertContexts.clear();
 
     const targetPair = pair || this.currentPair;
     this.currentPair = targetPair;
@@ -434,11 +520,11 @@ class SocketHandler {
   async _startDerivStream(clientId, pair, speed) {
     try {
       const pairConfig = TRADING_PAIRS[pair];
-      
+
       if (!pairConfig || pairConfig.source !== 'deriv') {
         this.clientManager.send(clientId, WS_EVENTS.SERVER.ERROR, {
           message: `${pair} is not a Deriv trading pair`,
-          availableDerivPairs: Object.keys(TRADING_PAIRS).filter(p => TRADING_PAIRS[p].source === 'deriv'),
+          availableDerivPairs: Object.keys(TRADING_PAIRS).filter((p) => TRADING_PAIRS[p].source === 'deriv'),
         });
         return;
       }
@@ -455,7 +541,7 @@ class SocketHandler {
       if (historicalCandles.length > 0) {
         this.candleHistory = historicalCandles;
         this.baselineCandles = historicalCandles.slice(0, 30);
-        
+
         this.clientManager.broadcast(WS_EVENTS.SERVER.CANDLE, {
           candles: historicalCandles.slice(-10),
           source: 'deriv',
@@ -603,6 +689,7 @@ class SocketHandler {
       return;
     }
 
+    this.currentTimeframe = timeframe;
     this.marketService.setTimeframe(timeframe);
 
     const client = this.clientManager.get(clientId);
@@ -613,6 +700,82 @@ class SocketHandler {
     const { activity } = data || {};
     this.clientManager.updateActivity(clientId, activity);
     this._logClientEvent(clientId, 'USER_ACTIVITY', { activity });
+  }
+
+  async _generateFollowupExplanation(clientId, alertId, context) {
+    if (context.followupInProgress) {
+      return;
+    }
+    if (context.followupUsed) {
+      this.clientManager.send(clientId, WS_EVENTS.SERVER.ERROR, {
+        message: 'Detailed explanation already generated for this alert',
+      });
+      return;
+    }
+
+    context.followupInProgress = true;
+    this.alertContexts.set(alertId, context);
+
+    const generationStart = Date.now();
+
+    const explanation = await generateExplanation(
+      {
+        riskLevel: context.riskLevel,
+        previousState: context.previousState,
+        shortAlertMessage: context.shortAlertMessage,
+        what_happened: context.whatHappened,
+        signals: context.signals,
+        metrics: context.metrics,
+        pair: context.pair,
+        timeframe: context.timeframe,
+        recentCandleBehavior: context.recentCandleBehavior,
+        user_context: this.clientManager.get(clientId)?.userActivity || context.userContext || USER_CONTEXT.VIEWING_CHART,
+      },
+      (partialText) => {
+        this.clientManager.send(clientId, 'explanation_chunk', {
+          alertId,
+          partialText,
+          timestamp: Date.now(),
+        });
+      },
+      { mode: 'full' }
+    );
+
+    const generationTimeMs = Date.now() - generationStart;
+
+    this.clientManager.send(clientId, 'explanation_complete', {
+      alertId,
+      message: explanation.message,
+      source: explanation.source,
+      confidence: explanation.confidence,
+      tags: explanation.tags,
+      generationTimeMs,
+      timestamp: Date.now(),
+    });
+
+    context.shortAlertMessage = explanation.message;
+    context.followupInProgress = false;
+    context.followupUsed = true;
+    context.updatedAt = Date.now();
+    this.alertContexts.set(alertId, context);
+
+    const client = this.clientManager.get(clientId);
+    if (client?.dbSessionId) {
+      Intervention.create({
+        sessionId: client.dbSessionId,
+        reason: 'alert_response_waited',
+        message: explanation.message,
+        model: explanation.source === 'llm' ? 'gpt-4o-mini' : 'failsafe',
+        meta: {
+          alertId,
+          riskLevel: context.riskLevel,
+          pair: context.pair,
+          timeframe: context.timeframe,
+          generationTimeMs,
+          mode: 'full',
+        },
+      }).catch((err) => console.error('[WebSocket] Failed to create follow-up intervention:', err.message));
+    }
   }
 
   _handleAlertResponse(clientId, data) {
@@ -635,6 +798,32 @@ class SocketHandler {
       alertId: targetAlertId,
       response,
     });
+
+    if (response !== USER_RESPONSE.WAITED) {
+      return;
+    }
+
+    const context = this.alertContexts.get(targetAlertId);
+    if (!context) {
+      this.clientManager.send(clientId, WS_EVENTS.SERVER.ERROR, {
+        message: `No alert context found for ${targetAlertId}`,
+      });
+      return;
+    }
+
+    this._generateFollowupExplanation(clientId, targetAlertId, context)
+      .catch((error) => {
+        console.error('[WebSocket] Failed to generate follow-up explanation:', error.message);
+        this.clientManager.send(clientId, WS_EVENTS.SERVER.ERROR, {
+          message: 'Failed to generate follow-up explanation',
+        });
+
+        const latestContext = this.alertContexts.get(targetAlertId);
+        if (latestContext) {
+          latestContext.followupInProgress = false;
+          this.alertContexts.set(targetAlertId, latestContext);
+        }
+      });
   }
 
   _handleGetOrderBook(clientId, data = {}) {
@@ -701,6 +890,7 @@ class SocketHandler {
       streamState: this.marketService.getState(),
       candleHistoryLength: this.candleHistory.length,
       baselineCandlesLength: this.baselineCandles.length,
+      cachedAlerts: this.alertContexts.size,
     };
   }
 

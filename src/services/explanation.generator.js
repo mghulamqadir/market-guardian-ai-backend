@@ -13,9 +13,23 @@ Rules:
 
 Return plain text only.`;
 
+const SYSTEM_PROMPT_FULL = `You are the Market Guardian explainer.
+
+Write one fuller risk explanation for a single alert.
+
+Rules:
+- Use clear, plain language. Keep trading jargon light.
+- Use 4-8 sentences.
+- Explain what changed, why risk is elevated, and what the user should watch next.
+- Keep a neutral risk-context tone.
+- No buy/sell advice.
+- Keep it concise and actionable.
+- Return only the explanation text.`;
+
 const LLM_MODEL = 'gpt-4o-mini';
-const LLM_MAX_TOKENS =100;
-const LLM_TIMEOUT_MS =8000;
+const LLM_MAX_TOKENS_SHORT = 120;
+const LLM_MAX_TOKENS_FULL = 320;
+const LLM_TIMEOUT_MS = 8000;
 const USE_STREAMING = '1';
 
 /**
@@ -28,14 +42,15 @@ const FAILSAFE_RESPONSE = {
 };
 
 /**
- * Generates a calm, neutral explanation for market risk events
- * Primary production function - attempts LLM first, falls back to safe response
- * 
- * @param {Object} payload - Analysis payload with market_state, signals, user_context
- * @param {Function} onChunk - Optional callback for streaming chunks: (partialText) => void
+ * Generates a calm, neutral explanation for market risk events.
+ *
+ * @param {Object} payload - Analysis payload with risk context
+ * @param {Function|null} onChunk - Optional streaming callback receiving next text chunk
+ * @param {Object} options - Generation options
+ * @param {'short'|'full'} options.mode - Output style mode
  * @returns {Promise<Object>} { message, tags, confidence, source, validated }
  */
-export async function generateExplanation(payload = {}, onChunk = null) {
+export async function generateExplanation(payload = {}, onChunk = null, options = {}) {
   try {
     const apiKey = process.env.OPENAI_API_KEY;
 
@@ -57,8 +72,9 @@ export async function generateExplanation(payload = {}, onChunk = null) {
       };
     }
 
-    console.log('[explanation.generator] Generating explanation via LLM...');
-    const result = await generateExplanationWithLLM(payload, apiKey, onChunk);
+    const mode = options?.mode === 'full' ? 'full' : 'short';
+    console.log('[explanation.generator] Generating explanation via LLM...', { mode });
+    const result = await generateExplanationWithLLM(payload, apiKey, onChunk, mode);
     console.log('[explanation.generator] Explanation generated:', result);
     return result;
   } catch (error) {
@@ -73,20 +89,11 @@ export async function generateExplanation(payload = {}, onChunk = null) {
 
 /**
  * LLM-based explanation generation with OpenAI API
- * Uses system prompt to enforce safety rules at generation time
- * Supports streaming for instant response feedback
- * 
- * @param {Object} payload - Market analysis data
- * @param {string} apiKey - OpenAI API key
- * @param {Function} onChunk - Optional callback for streaming chunks
- * @returns {Promise<Object>} Generated explanation with metadata
  */
-async function generateExplanationWithLLM(payload, apiKey, onChunk = null) {
+async function generateExplanationWithLLM(payload, apiKey, onChunk = null, mode = 'short') {
   try {
-    const userPrompt = buildUserPromptFromPayload(payload);
-    console.log('[explanation.generator] User prompt:', userPrompt);
-    // Use shorter prompt by default for faster processing, unless explicitly disabled
-    const systemPrompt = SYSTEM_PROMPT_SHORT;
+    const userPrompt = buildUserPromptFromPayload(payload, mode);
+    const systemPrompt = mode === 'full' ? SYSTEM_PROMPT_FULL : SYSTEM_PROMPT_SHORT;
 
     const controller = new AbortController();
     const timeoutEnabled = Number.isFinite(LLM_TIMEOUT_MS) && LLM_TIMEOUT_MS > 0;
@@ -95,18 +102,17 @@ async function generateExplanationWithLLM(payload, apiKey, onChunk = null) {
       : null;
 
     const useStreaming = USE_STREAMING && typeof onChunk === 'function';
-    console.log('[explanation.generator] Use streaming:', useStreaming);
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       signal: controller.signal,
       body: JSON.stringify({
         model: LLM_MODEL,
-        max_tokens: LLM_MAX_TOKENS,
-        temperature: 0.3,
+        max_tokens: mode === 'full' ? LLM_MAX_TOKENS_FULL : LLM_MAX_TOKENS_SHORT,
+        temperature: mode === 'full' ? 0.4 : 0.3,
         stream: useStreaming,
         messages: [
           {
@@ -124,15 +130,20 @@ async function generateExplanationWithLLM(payload, apiKey, onChunk = null) {
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`OpenAI API error: ${response.status} - ${errorData?.error?.message || 'Unknown error'}`);
+      let errorMessage = 'Unknown error';
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData?.error?.message || errorMessage;
+      } catch {
+        // ignore parse error for non-json responses
+      }
+      throw new Error(`OpenAI API error: ${response.status} - ${errorMessage}`);
     }
 
     let llmMessage;
 
     if (useStreaming) {
       llmMessage = await processStreamingResponse(response, onChunk);
-      console.log('[explanation.generator] LLM message in If:', llmMessage);
     } else {
       const data = await response.json();
       llmMessage = data.choices?.[0]?.message?.content?.trim();
@@ -143,7 +154,6 @@ async function generateExplanationWithLLM(payload, apiKey, onChunk = null) {
       throw new Error('Invalid response format from OpenAI API - no message content');
     }
 
-    // Generate metadata based on payload
     const tags = generateTagsFromPayload(payload);
     const confidence = determineConfidenceLevel(payload);
     console.log('[explanation.generator] Tags:', tags);
@@ -169,47 +179,41 @@ async function generateExplanationWithLLM(payload, apiKey, onChunk = null) {
 }
 
 /**
- * Process streaming response from OpenAI API
- * Calls onChunk callback with partial text as it arrives
- * 
- * @param {Response} response - Fetch API response object
- * @param {Function} onChunk - Callback to receive partial text
- * @returns {Promise<string>} Complete message text
+ * Process streaming response from OpenAI API.
+ * Calls onChunk with incremental text chunks as they arrive.
  */
 async function processStreamingResponse(response, onChunk) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder('utf-8');
   let fullMessage = '';
+  let buffer = '';
 
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split('\n').filter(line => line.trim() !== '');
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
 
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6); // Remove 'data: ' prefix
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line.startsWith('data: ')) continue;
 
-          if (data === '[DONE]') {
-            continue;
+        const data = line.slice(6);
+        if (!data || data === '[DONE]') continue;
+
+        try {
+          const parsed = JSON.parse(data);
+          const content = parsed.choices?.[0]?.delta?.content;
+
+          if (content) {
+            fullMessage += content;
+            onChunk(content);
           }
-
-          try {
-            const parsed = JSON.parse(data);
-            const content = parsed.choices?.[0]?.delta?.content;
-
-            if (content) {
-              fullMessage += content;
-              // Send partial message to callback immediately
-              onChunk(fullMessage);
-            }
-          } catch (parseError) {
-            // Skip malformed JSON chunks
-            console.warn('[explanation.generator] Skipping malformed chunk:', parseError.message);
-          }
+        } catch (parseError) {
+          console.warn('[explanation.generator] Skipping malformed chunk:', parseError.message);
         }
       }
     }
@@ -223,34 +227,69 @@ async function processStreamingResponse(response, onChunk) {
 /**
  * Builds user prompt from payload data for LLM context
  */
-function buildUserPromptFromPayload(payload) {
+function buildUserPromptFromPayload(payload, mode = 'short') {
   const {
     market_state,
+    riskLevel,
+    previousState,
+    shortAlertMessage,
     what_happened,
+    whatHappened,
     signals = [],
+    metrics = {},
+    pair,
+    timeframe,
+    recentCandleBehavior,
     user_context,
   } = payload;
-  console.log('payload', user_context);
+
+  const normalizedRiskLevel = riskLevel || market_state?.current || market_state;
+  const normalizedPreviousState = previousState || market_state?.previous;
+  const normalizedWhatHappened = what_happened || whatHappened;
+
   const parts = [];
-  parts.push('Data for neutral market status explanation:');
+  parts.push('Risk context:');
 
-  if (market_state) {
-    parts.push(`Current State: ${market_state.current || market_state}`);
-    if (market_state.previous) {
-      parts.push(`Previous State: ${market_state.previous}`);
-    }
+  if (normalizedRiskLevel) {
+    parts.push(`- riskLevel: ${normalizedRiskLevel}`);
+  }
+  if (normalizedPreviousState) {
+    parts.push(`- previousState: ${normalizedPreviousState}`);
+  }
+  if (shortAlertMessage) {
+    parts.push(`- shortAlertMessage: ${shortAlertMessage}`);
+  }
+  if (normalizedWhatHappened) {
+    parts.push(`- shortAlertType: ${normalizedWhatHappened}`);
   }
 
-  if (what_happened) {
-    parts.push(`Event: ${what_happened}`);
+  if (Array.isArray(signals) && signals.length > 0) {
+    parts.push(`- signals: ${signals.join('; ')}`);
   }
 
-  if (signals.length > 0) {
-    parts.push(`Signals: ${signals.join(', ')}`);
+  const derivedMetrics = {
+    volumeRatio: metrics?.volumeRatio,
+    rangePercent: metrics?.rangePercent,
+    priceChangePercent: metrics?.priceChangePercent ?? metrics?.percentChange,
+    trades: metrics?.trades,
+    tradeCountRatio: metrics?.tradeCountRatio,
+  };
+
+  parts.push(`- metrics: ${JSON.stringify(derivedMetrics)}`);
+
+  if (pair) parts.push(`- pair: ${pair}`);
+  if (timeframe) parts.push(`- timeframe: ${timeframe}`);
+  if (recentCandleBehavior) parts.push(`- recentCandleBehavior: ${recentCandleBehavior}`);
+  if (user_context) parts.push(`- userContext: ${user_context}`);
+
+  if (mode === 'full') {
+    parts.push('Write a fuller explanation in 4-8 sentences.');
+  } else {
+    parts.push('Write 2-3 short neutral sentences about observed conditions only.');
   }
 
-  parts.push('Write 2-3 short neutral sentences about observed conditions only.');
-  console.log('parts', parts);
+  parts.push('Return only the explanation text.');
+
   return parts.join('\n');
 }
 
