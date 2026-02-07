@@ -9,6 +9,7 @@ import { MarketDataService, SCENARIOS } from './market.data.service.js';
 import { Session, Event, Intervention, Candle } from '../models/index.js';
 import { analyzeMarket, resetSession } from './market.risk.engine.js';
 import { generateExplanation } from './explanation.generator.js';
+import derivMarketAdapter from './deriv.market.adapter.js';
 import {
   TRADING_PAIRS,
   TIMEFRAMES,
@@ -152,12 +153,16 @@ class SocketHandler {
     this.candleHistory = [];
     this.baselineCandles = [];
     this.isProcessingRisk = false;
+    this.streamMode = 'simulated';
+    this.currentPair = 'BTC/USDT';
+    this.currentTimeframe = '1m';
+    this.derivSubscription = null;
 
-    this.#setupMarketServiceListeners();
-    this.#setupWebSocketServer();
+    this._setupMarketServiceListeners();
+    this._setupWebSocketServer();
   }
 
-  #setupMarketServiceListeners() {
+  _setupMarketServiceListeners() {
     // Throttle immediate risk checks to max once every 5 seconds
     const RISK_CHECK_COOLDOWN_MS = 5000;
     let lastRiskCheckTime = 0;
@@ -173,7 +178,7 @@ class SocketHandler {
         const priceChange = Math.abs((candle.close - candle.open) / candle.open) * 100;
         if (priceChange > 0.5) {
           lastRiskCheckTime = now;
-          await this.#analyzeRisk(candle);
+          await this._analyzeRisk(candle);
         }
       }
     });
@@ -189,8 +194,8 @@ class SocketHandler {
       }
 
       this.clientManager.broadcast(WS_EVENTS.SERVER.CANDLE_CLOSED, candle);
-      this.#storeClosedCandle(candle);
-      await this.#analyzeRisk();
+      this._storeClosedCandle(candle);
+      await this._analyzeRisk();
     });
 
     this.marketService.on('trade', (trade) => {
@@ -214,7 +219,7 @@ class SocketHandler {
     });
   }
 
-  async #analyzeRisk(activeCandle = null) {
+  async _analyzeRisk(activeCandle = null) {
     if (this.isProcessingRisk) return;
     if (this.candleHistory.length < 5 && !activeCandle) return;
 
@@ -318,7 +323,7 @@ class SocketHandler {
     }
   }
 
-  #setupWebSocketServer() {
+  _setupWebSocketServer() {
     this.wss.on('connection', async (ws, req) => {
       const clientId = await this.clientManager.add(ws, req);
 
@@ -333,7 +338,7 @@ class SocketHandler {
       });
 
       ws.on('message', (message) => {
-        this.#handleMessage(clientId, message);
+        this._handleMessage(clientId, message);
       });
 
       ws.on('close', () => {
@@ -342,7 +347,7 @@ class SocketHandler {
     });
   }
 
-  #handleMessage(clientId, rawMessage) {
+  _handleMessage(clientId, rawMessage) {
     try {
       const { event, data } = JSON.parse(rawMessage);
       switch (event) {
@@ -350,31 +355,31 @@ class SocketHandler {
           this.clientManager.send(clientId, WS_EVENTS.SERVER.PONG, { serverTime: Date.now() });
           break;
         case WS_EVENTS.CLIENT.START_STREAM:
-          this.#handleStartStream(clientId, data);
+          this._handleStartStream(clientId, data);
           break;
         case WS_EVENTS.CLIENT.STOP_STREAM:
-          this.#handleStopStream(clientId);
+          this._handleStopStream(clientId);
           break;
         case WS_EVENTS.CLIENT.SET_SCENARIO:
-          this.#handleSetScenario(clientId, data);
+          this._handleSetScenario(clientId, data);
           break;
         case WS_EVENTS.CLIENT.SET_PAIR:
-          this.#handleSetPair(clientId, data);
+          this._handleSetPair(clientId, data);
           break;
         case WS_EVENTS.CLIENT.SET_TIMEFRAME:
-          this.#handleSetTimeframe(clientId, data);
+          this._handleSetTimeframe(clientId, data);
           break;
         case WS_EVENTS.CLIENT.USER_ACTIVITY:
-          this.#handleUserActivity(clientId, data);
+          this._handleUserActivity(clientId, data);
           break;
         case WS_EVENTS.CLIENT.ALERT_RESPONSE:
-          this.#handleAlertResponse(clientId, data);
+          this._handleAlertResponse(clientId, data);
           break;
         case WS_EVENTS.CLIENT.GET_ORDERBOOK:
-          this.#handleGetOrderBook(clientId, data);
+          this._handleGetOrderBook(clientId, data);
           break;
         case WS_EVENTS.CLIENT.GET_TRADES:
-          this.#handleGetTrades(clientId, data);
+          this._handleGetTrades(clientId, data);
           break;
         default:
           this.clientManager.send(clientId, WS_EVENTS.SERVER.ERROR, { message: `Unknown event: ${event}` });
@@ -384,13 +389,30 @@ class SocketHandler {
     }
   }
 
-  #handleStartStream(clientId, data = {}) {
+  async _handleStartStream(clientId, data = {}) {
     const { mode, speed, pair } = data;
 
     resetSession('global');
     this.candleHistory = [];
     this.baselineCandles = [];
 
+    const targetPair = pair || this.currentPair;
+    this.currentPair = targetPair;
+    this.streamMode = mode || 'simulated';
+
+    // Stop any existing streams
+    await this._stopAllStreams();
+
+    if (this.streamMode === 'deriv') {
+      await this._startDerivStream(clientId, targetPair, speed);
+    } else {
+      this._startSimulatedStream(clientId, targetPair, speed, mode);
+    }
+
+    this._logClientEvent(clientId, 'STREAM_STARTED', { mode: this.streamMode, speed, pair: targetPair });
+  }
+
+  _startSimulatedStream(clientId, pair, speed, mode) {
     if (pair && TRADING_PAIRS[pair]) {
       this.marketService.setPair(pair);
     }
@@ -403,19 +425,117 @@ class SocketHandler {
     this.marketService.reset();
 
     if (mode === 'demo') {
-      this.#queueDemoSequence();
+      this._queueDemoSequence();
     }
 
     this.marketService.start();
-    this.#logClientEvent(clientId, 'STREAM_STARTED', { mode, speed, pair });
   }
 
-  #handleStopStream(clientId) {
+  async _startDerivStream(clientId, pair, speed) {
+    try {
+      const pairConfig = TRADING_PAIRS[pair];
+      
+      if (!pairConfig || pairConfig.source !== 'deriv') {
+        this.clientManager.send(clientId, WS_EVENTS.SERVER.ERROR, {
+          message: `${pair} is not a Deriv trading pair`,
+          availableDerivPairs: Object.keys(TRADING_PAIRS).filter(p => TRADING_PAIRS[p].source === 'deriv'),
+        });
+        return;
+      }
+
+      await derivMarketAdapter.initialize();
+
+      // Get historical candles first
+      const historicalCandles = await derivMarketAdapter.getHistoricalCandles(
+        pair,
+        this.currentTimeframe,
+        50
+      );
+
+      if (historicalCandles.length > 0) {
+        this.candleHistory = historicalCandles;
+        this.baselineCandles = historicalCandles.slice(0, 30);
+        
+        this.clientManager.broadcast(WS_EVENTS.SERVER.CANDLE, {
+          candles: historicalCandles.slice(-10),
+          source: 'deriv',
+          pair,
+        });
+      }
+
+      // Subscribe to real-time candles
+      await derivMarketAdapter.subscribeCandles(
+        pair,
+        this.currentTimeframe,
+        (candle) => this._handleDerivCandle(candle)
+      );
+
+      this.derivSubscription = { pair, timeframe: this.currentTimeframe };
+
+      this.clientManager.send(clientId, WS_EVENTS.SERVER.STATE_CHANGE, {
+        type: 'deriv_stream_started',
+        pair,
+        timeframe: this.currentTimeframe,
+        source: 'deriv',
+      });
+
+      console.log(`[WebSocket] Started Deriv stream for ${pair}`);
+    } catch (error) {
+      console.error('[WebSocket] Failed to start Deriv stream:', error.message);
+      this.clientManager.send(clientId, WS_EVENTS.SERVER.ERROR, {
+        message: `Failed to start Deriv stream: ${error.message}`,
+      });
+    }
+  }
+
+  _handleDerivCandle(candle) {
+    this.candleHistory.push(candle);
+    if (this.candleHistory.length > 200) {
+      this.candleHistory.shift();
+    }
+
+    this.clientManager.broadcast(WS_EVENTS.SERVER.CANDLE, {
+      ...candle,
+      source: 'deriv',
+    });
+
+    this.clientManager.broadcast(WS_EVENTS.SERVER.METRICS, {
+      price: candle.close,
+      change: candle.close - candle.open,
+      changePercent: ((candle.close - candle.open) / candle.open) * 100,
+      high: candle.high,
+      low: candle.low,
+      volume: candle.volume || 0,
+      source: 'deriv',
+    });
+
+    // Risk analysis for Deriv data
+    if (this.candleHistory.length >= 10) {
+      this._performRiskAnalysis();
+    }
+  }
+
+  async _stopAllStreams() {
+    // Stop simulated stream
     this.marketService.stop();
-    this.#logClientEvent(clientId, 'STREAM_STOPPED', {});
+
+    // Stop Deriv stream
+    if (this.derivSubscription) {
+      try {
+        await derivMarketAdapter.unsubscribeAll();
+        this.derivSubscription = null;
+      } catch (error) {
+        console.error('[WebSocket] Failed to stop Deriv stream:', error.message);
+      }
+    }
   }
 
-  #handleSetScenario(clientId, data) {
+  async _handleStopStream(clientId) {
+    await this._stopAllStreams();
+    this._logClientEvent(clientId, 'STREAM_STOPPED', {});
+  }
+
+  _handleSetScenario(clientId, data) {
     const { scenario, duration, intensity } = data || {};
 
     if (!scenario) {
@@ -439,7 +559,7 @@ class SocketHandler {
     }
   }
 
-  #handleSetPair(clientId, data) {
+  async _handleSetPair(clientId, data) {
     const { pair } = data || {};
     if (!TRADING_PAIRS[pair]) {
       this.clientManager.send(clientId, WS_EVENTS.SERVER.ERROR, {
@@ -452,7 +572,15 @@ class SocketHandler {
     resetSession('global');
     this.candleHistory = [];
     this.baselineCandles = [];
-    this.marketService.setPair(pair);
+    this.currentPair = pair;
+
+    // Restart stream with new pair
+    if (this.streamMode === 'deriv') {
+      await this._stopAllStreams();
+      await this._startDerivStream(clientId, pair, 'normal');
+    } else {
+      this.marketService.setPair(pair);
+    }
 
     const client = this.clientManager.get(clientId);
     if (client) client.pair = pair;
@@ -461,10 +589,11 @@ class SocketHandler {
       type: 'pair_changed',
       pair,
       pairConfig: TRADING_PAIRS[pair],
+      mode: this.streamMode,
     });
   }
 
-  #handleSetTimeframe(clientId, data) {
+  _handleSetTimeframe(clientId, data) {
     const { timeframe } = data || {};
     if (!TIMEFRAMES[timeframe]) {
       this.clientManager.send(clientId, WS_EVENTS.SERVER.ERROR, {
@@ -480,13 +609,13 @@ class SocketHandler {
     if (client) client.timeframe = timeframe;
   }
 
-  #handleUserActivity(clientId, data) {
+  _handleUserActivity(clientId, data) {
     const { activity } = data || {};
     this.clientManager.updateActivity(clientId, activity);
-    this.#logClientEvent(clientId, 'USER_ACTIVITY', { activity });
+    this._logClientEvent(clientId, 'USER_ACTIVITY', { activity });
   }
 
-  #handleAlertResponse(clientId, data) {
+  _handleAlertResponse(clientId, data) {
     const { alertId, response } = data || {};
     const client = this.clientManager.get(clientId);
     if (!client) return;
@@ -502,27 +631,27 @@ class SocketHandler {
       return;
     }
 
-    this.#logClientEvent(clientId, 'ALERT_RESPONSE', {
+    this._logClientEvent(clientId, 'ALERT_RESPONSE', {
       alertId: targetAlertId,
       response,
     });
   }
 
-  #handleGetOrderBook(clientId, data = {}) {
+  _handleGetOrderBook(clientId, data = {}) {
     const depth = data.depth || STREAM_CONFIG.ORDERBOOK_DEPTH;
     const orderBook = this.marketService.getOrderBook(depth);
     this.clientManager.send(clientId, WS_EVENTS.SERVER.ORDERBOOK, orderBook);
-    this.#logClientEvent(clientId, 'ORDERBOOK_REQUEST', { depth });
+    this._logClientEvent(clientId, 'ORDERBOOK_REQUEST', { depth });
   }
 
-  #handleGetTrades(clientId, data = {}) {
+  _handleGetTrades(clientId, data = {}) {
     const count = data.count || 50;
     const trades = this.marketService.getRecentTrades(count);
     this.clientManager.send(clientId, WS_EVENTS.SERVER.TRADE, { trades });
-    this.#logClientEvent(clientId, 'TRADES_REQUEST', { count });
+    this._logClientEvent(clientId, 'TRADES_REQUEST', { count });
   }
 
-  #logClientEvent(clientId, actionType, meta) {
+  _logClientEvent(clientId, actionType, meta) {
     const client = this.clientManager.get(clientId);
     if (!client?.dbSessionId) return;
     Event.create({
@@ -533,7 +662,7 @@ class SocketHandler {
     }).catch((err) => console.log('Failed to create event', err));
   }
 
-  #queueDemoSequence() {
+  _queueDemoSequence() {
     setTimeout(() => this.marketService.setScenario(SCENARIOS.NORMAL, 10), 0);
     setTimeout(() => this.marketService.setScenario(SCENARIOS.DOWNTREND, 8), 12000);
     setTimeout(() => this.marketService.setScenario(SCENARIOS.VOLATILE_DUMP, 12), 22000);
@@ -542,7 +671,7 @@ class SocketHandler {
     setTimeout(() => this.marketService.setScenario(SCENARIOS.NORMAL, 20), 58000);
   }
 
-  #storeClosedCandle(candle) {
+  _storeClosedCandle(candle) {
     this.clientManager.clients.forEach((client) => {
       if (!client?.dbSessionId) return;
       Candle.create({

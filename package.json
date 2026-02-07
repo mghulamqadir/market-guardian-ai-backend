@@ -24,6 +24,7 @@
     "@aws-sdk/client-lambda": "^3.965.0",
     "@aws-sdk/client-s3": "^3.965.0",
     "@aws-sdk/credential-providers": "^3.965.0",
+    "@deriv/deriv-api": "^1.0.15",
     "@sendgrid/mail": "^8.1.6",
     "bcryptjs": "^3.0.3",
     "body-parser": "^2.2.1",
