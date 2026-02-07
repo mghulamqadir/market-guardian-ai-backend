@@ -1,6 +1,7 @@
 import express from 'express';
 
 import { marketEvent } from '../controllers/session.demo.controller.js';
+import { getCandles } from '../controllers/market.controller.js';
 import { TRADING_PAIRS, TIMEFRAMES, SCENARIOS } from '../utils/market.constants.js';
 
 const router = express.Router();
@@ -127,6 +128,100 @@ const router = express.Router();
  *                   type: string
  */
 router.post('/event', marketEvent);
+
+/**
+ * @swagger
+ * /api/market/candles:
+ *   get:
+ *     summary: Get candles for dashboard charts
+ *     tags: [Market]
+ *     description: Retrieve stored candles with optional pair, timeframe, session, and time-range filters
+ *     parameters:
+ *       - in: query
+ *         name: pair
+ *         schema:
+ *           type: string
+ *           example: BTC/USDT
+ *         description: Trading pair symbol
+ *       - in: query
+ *         name: timeframe
+ *         schema:
+ *           type: string
+ *           enum: [1s, 1m, 5m, 15m, 1h, 4h, 1d]
+ *           example: 1m
+ *         description: Candle timeframe
+ *       - in: query
+ *         name: sessionId
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Optional session id
+ *       - in: query
+ *         name: from
+ *         schema:
+ *           type: string
+ *           example: 2026-02-01T00:00:00.000Z
+ *         description: Start time as ISO date or unix milliseconds
+ *       - in: query
+ *         name: to
+ *         schema:
+ *           type: string
+ *           example: 2026-02-07T23:59:59.000Z
+ *         description: End time as ISO date or unix milliseconds
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 1000
+ *           default: 200
+ *         description: Maximum candles to return
+ *     responses:
+ *       200:
+ *         description: Candles retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/Success'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: object
+ *                       properties:
+ *                         count:
+ *                           type: integer
+ *                         filters:
+ *                           type: object
+ *                         candles:
+ *                           type: array
+ *                           items:
+ *                             type: object
+ *                             properties:
+ *                               symbol:
+ *                                 type: string
+ *                               timeframe:
+ *                                 type: string
+ *                               openTime:
+ *                                 type: string
+ *                                 format: date-time
+ *                               closeTime:
+ *                                 type: string
+ *                                 format: date-time
+ *                               open:
+ *                                 type: string
+ *                               high:
+ *                                 type: string
+ *                               low:
+ *                                 type: string
+ *                               close:
+ *                                 type: string
+ *                               volume:
+ *                                 type: string
+ *       400:
+ *         description: Invalid query parameters
+ */
+router.get('/candles', getCandles);
 
 /**
  * @swagger
