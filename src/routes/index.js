@@ -6,6 +6,7 @@ import mediaRoutes from './media.route.js';
 import sessionRoutes from './session.demo.route.js';
 import marketRoutes from './market.route.js';
 import derivRoutes from './deriv.route.js';
+import analysisRoutes from './analysis.route.js';
 
 const router = express.Router();
 router.use('/', authRoutes);
@@ -14,5 +15,6 @@ router.use('/media', mediaRoutes);
 router.use('/demo', sessionRoutes);
 router.use('/market', marketRoutes);
 router.use('/deriv', derivRoutes);
+router.use('/analysis', analysisRoutes);
 
 export default router;
