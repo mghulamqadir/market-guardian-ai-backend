@@ -5,7 +5,7 @@ import User from '../models/user.model.js';
 import Otp from '../models/otp.model.js';
 
 import { ApiError } from '../utils/response.handler.js';
-import { generateJwtToken } from '../utils/jwt.token.js';
+import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../utils/jwt.token.js';
 
 import {
   sendPasswordResetEmail,
@@ -109,12 +109,14 @@ export async function login({ email, password }) {
   const response = { user: user.toJSON() };
 
   if (user.isVerified) {
-    response.token = generateJwtToken({ userId: user.id });
+    response.accessToken = generateAccessToken({ userId: user.id });
+    response.refreshToken = generateRefreshToken({ userId: user.id });
     response.message = 'Login successful';
     response.success = true;
   } else {
     response.message = 'Please verify your account';
-    response.token = null;
+    response.accessToken = null;
+    response.refreshToken = null;
     response.user = null;
     response.success = false;
 
@@ -323,4 +325,45 @@ export async function resendVerificationEmail(email, purpose) {
   }
 
   return { message: 'Verification email sent successfully.' };
+}
+
+/**
+ * AUTH: Refresh Access Token
+ * - Verify refresh token
+ * - Generate new access token and new refresh token
+ */
+export async function refreshAccessToken(refreshToken) {
+  if (!refreshToken) {
+    throw ApiError(400, 'Refresh token is required', []);
+  }
+
+  try {
+    const decoded = verifyRefreshToken(refreshToken);
+    
+    const user = await User.findByPk(decoded.userId);
+    if (!user) {
+      throw ApiError(404, 'User not found', []);
+    }
+
+    if (!user.isVerified) {
+      throw ApiError(403, 'User account is not verified', []);
+    }
+
+    const newAccessToken = generateAccessToken({ userId: user.id });
+    const newRefreshToken = generateRefreshToken({ userId: user.id });
+    
+    return {
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
+      message: 'Access token refreshed successfully',
+    };
+  } catch (error) {
+    if (error.message === 'Refresh token has expired') {
+      throw ApiError(401, 'Refresh token has expired', ['Please login again.']);
+    }
+    if (error.message === 'Invalid refresh token') {
+      throw ApiError(401, 'Invalid refresh token', ['Please login again.']);
+    }
+    throw error;
+  }
 }

@@ -193,9 +193,12 @@ router.post(
  *                     data:
  *                       type: object
  *                       properties:
- *                         token:
+ *                         accessToken:
  *                           type: string
- *                           description: JWT access token
+ *                           description: JWT access token (valid for 15 minutes)
+ *                         refreshToken:
+ *                           type: string
+ *                           description: JWT refresh token (valid for 7 days)
  *                         user:
  *                           $ref: '#/components/schemas/User'
  *       401:
@@ -288,5 +291,71 @@ router.post(
   resetPasswordValidator,
   authControllers.resetPassword,
 );
+
+/**
+ * @swagger
+ * /api/refresh-token:
+ *   post:
+ *     summary: Refresh access token using refresh token
+ *     tags: [Authentication]
+ *     description: Generate new access token and refresh token using a valid refresh token
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - refreshToken
+ *             properties:
+ *               refreshToken:
+ *                 type: string
+ *                 description: Valid refresh token received from login
+ *                 example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+ *     responses:
+ *       200:
+ *         description: Tokens refreshed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/Success'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: object
+ *                       properties:
+ *                         accessToken:
+ *                           type: string
+ *                           description: New JWT access token (valid for 15 minutes)
+ *                         refreshToken:
+ *                           type: string
+ *                           description: New JWT refresh token (valid for 30 days)
+ *       400:
+ *         description: Refresh token is required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Invalid or expired refresh token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: User account is not verified
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.post('/refresh-token', authControllers.refreshToken);
 
 export default router;

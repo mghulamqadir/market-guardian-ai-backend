@@ -15,8 +15,8 @@ export async function signup(req, res) {
 
 export async function login(req, res) {
   try {
-    const { token, user, message } = await authService.login(req.body);
-    return successResponse(res, 200, message, { user, token });
+    const { accessToken, refreshToken, user, message } = await authService.login(req.body);
+    return successResponse(res, 200, message, { user, accessToken, refreshToken });
   } catch (error) {
     return errorResponse(res, error);
   }
@@ -61,6 +61,16 @@ export async function resendVerificationEmail(req, res) {
     const { email, purpose } = req.body;
     await authService.resendVerificationEmail(email, purpose);
     return successResponse(res, 200, 'Verification email sent successfully.');
+  } catch (error) {
+    return errorResponse(res, error);
+  }
+}
+
+export async function refreshToken(req, res) {
+  try {
+    const { refreshToken } = req.body;
+    const { accessToken, refreshToken: newRefreshToken, message } = await authService.refreshAccessToken(refreshToken);
+    return successResponse(res, 200, message, { accessToken, refreshToken: newRefreshToken });
   } catch (error) {
     return errorResponse(res, error);
   }
